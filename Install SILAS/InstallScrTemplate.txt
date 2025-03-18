@@ -1,0 +1,710 @@
+Attribute VB_Name = "InstallScrTemplate"
+' Install routine for Scripture Template Silas.dot
+' Check for version match:
+' If SilasVersion doesn't exist
+' or SilasInstallVersion > SilasVersion it reinstalls the new one.
+' if SilasInstallVersion = SilasVersion
+' and SilasInstallBuild > SilasBuild it installs the new one.
+
+' Global variables
+Public Const SilasInstallVersion As String = "2.35" ' Matches version of USFM
+Public Const SilasInstallBuild As String = "1.22"   ' Build number within version
+' These two numbers must match the numbers in
+' Silas.iss -- the distribution file builder
+' AttachSILASTemplate, which gets copied to Normal.dot on installation and
+' the global area of the Gen module of Silas.dot.
+Public Const ScrTemplateName As String = "Silas.dot"
+Public Const PageOrPrintView As Integer = 3
+Public Const Spaces As String = "              "
+Public Const StdPtSettingsFolder As String = "c:\My Paratext Projects"
+Dim IniPT As String
+Dim PtPathFromReg As String
+Dim CurrentPath As String
+Dim fs As Object
+Dim a As Object
+Dim ct As Object
+Dim Msg As String
+Dim Style As String
+Dim Title As String
+Dim Result As String
+Const NoCopy As Boolean = False
+Dim MacrosOK As Boolean
+Dim ToolbarOK As Boolean
+Dim InstallDoc As Variant
+Dim InstallDocName As String
+Dim IniFile As String
+Dim Verbose As Boolean
+Sub Main()
+'
+    Dim Report As String
+    Dim UpdatingTemplate As Boolean
+    Dim PtInstalled As String
+    Const UsageDoc As String = "Using Silas.doc"
+    Const IsCustomFile As Boolean = True
+    Const NotCustomFile As Boolean = False
+    Dim UserTemplates As String
+    Dim SettingsFor As String
+    
+    InstallDoc = ActiveDocument
+    InstallDocName = ActiveDocument.Name
+    Set fs = CreateObject("Scripting.FileSystemobject")
+    CurrentPath = ThisDocument.Path & Application.PathSeparator
+    IniPT = NormalTemplate.Path & Application.PathSeparator & "ParatextPath.ini"
+    
+    Set a = fs.CreateTextFile(IniPT, True)
+    a.Writeline ("; Configuration file for Silas.dot")
+    
+    If UseUserTemplates Then
+        SettingsFor = ""
+    Else
+        SettingsFor = "template and "
+    End If
+    
+    a.Writeline ("; stores path to Paratext settings folder for " & SettingsFor & "Languages.ini.")
+    a.Writeline ("; This file is made by the macro 'InstallScrTemplate' in 'Install silas.doc'.")
+    a.Writeline ("")
+    a.Close
+
+    ' set template install path for future ref. to help doc files.
+    System.PrivateProfileString(FileName:=IniPT, _
+         Section:="Template", Key:="InstallFolder") = CurrentPath
+   
+    If CheckForPTInstall = False Then
+        PtInstalled = "PtNotInstalled"
+        Msg = "I can't find Paratext on this computer. This template is designed to " & _
+            "work with output from Paratext Scripture files." & vbCrLf & _
+            "You may be installing Silas to use with files exported from " & _
+            "Translation Editor or Adapt It" & vbCrLf & _
+            "and it works well with those." & vbCrLf & _
+            "Or you might want to use it to format SFM files, ie. those typed with backslash codes." & vbCrLf & _
+            "It works well with those also." & vbCrLf & vbCrLf & _
+            "You may use it without one of those special programs," & vbCrLf & _
+            "but we don't recommend editing Scripture translation in Word " & vbCrLf & _
+            "unless you know how to deal with formatting issues. " & vbCrLf & vbCrLf & _
+            "Would you like to install this template anyway?" & vbCrLf & _
+            vbTab & "If you click 'YES' here, " & _
+            "the associated files will be installed in" & vbCrLf & _
+            vbTab & vbTab & "'" & StdPtSettingsFolder & "'," & vbCrLf & _
+            vbTab & "which is the default Paratext project settings folder. " & vbCrLf & vbCrLf & _
+            "Then later on, if you do " & _
+            "install Paratext, follow the recommended file locations and the " & _
+            "template will be ready to do its work."
+        Title = "SILAS: Paratext Program not found"
+        Style = vbYesNoCancel + vbExclamation
+        Result = MsgBox(Msg, Style, Title)
+        
+        If Result = vbNo Or Result = vbCancel Then
+            MsgBox "Smart Interactive Layout Assistant for Scripture has not been installed. " & _
+                "Try again later." & Spaces, vbOKOnly, "Installation Cancelled"
+            Exit Sub
+        ElseIf Result = vbYes Then
+            If fs.FolderExists(StdPtSettingsFolder) = False Then
+                fs.CreateFolder (StdPtSettingsFolder)
+            End If
+            PtPathFromReg = "c:\My Paratext Projects\"
+        End If
+    Else
+        PtInstalled = "PtInstalled"
+        If MsgBox("Installing Smart Interactive Layout Assistant for Scripture into " & _
+            PtPathFromReg & Spaces, vbOKCancel, "Install Silas Scripture Template") _
+            = vbCancel Then Exit Sub
+    End If
+    
+    ' Remember Pt settings folder path in ParatextPath.ini in normal template folder.
+    '
+    System.PrivateProfileString(FileName:=IniPT, _
+        Section:="PTProjects", Key:="Path") = PtPathFromReg
+    System.PrivateProfileString(FileName:=IniPT, _
+        Section:="PTProjects", Key:="PtInstall") = PtInstalled
+    
+    'Copy files to PT Path
+    '
+    UpdatingTemplate = CheckForNewVersion   ' also sets IniFile
+    
+    If UpdatingTemplate Then
+        If InstallFile(PtPathFromReg, _
+            "usfm.sty", NotCustomFile, Report, MoveAside:=False) = True Then
+        End If
+        
+        If InstallFile(PtPathFromReg, _
+            "usfm_draft.sty", NotCustomFile, Report, MoveAside:=False) = True Then
+        End If
+        
+        ' If we are going to put SILAS.dot in the user templates,
+        '   put it there
+        '   and tell InstallFile to move the old one in the PtSettings folder
+        '   into old versions. That's why it looks like we copy it to two places.
+        '
+        If UseUserTemplates Then
+            If InstallFile(NormalTemplate.Path, _
+                ScrTemplateName, NotCustomFile, Report, MoveAside:=False) = True Then
+            End If
+        End If
+        
+        If InstallFile(PtPathFromReg, _
+            ScrTemplateName, NotCustomFile, Report, MoveAside:=UseUserTemplates) = True Then
+        End If
+
+        If InstallFile(PtPathFromReg, _
+            "Checking Table.doc", IsCustomFile, Report, MoveAside:=False) = True Then
+        End If
+
+        If InstallFile(PtPathFromReg, _
+            "Custom_Styles.txt", IsCustomFile, Report, MoveAside:=False) = True Then
+        End If
+
+        If Report <> "" And Verbose Then
+            MsgBox "Here's a report on installing the files:" & Spaces & vbCrLf & vbCrLf & _
+                        Report, vbOKOnly, "Installation report"
+        End If
+    End If
+
+    If UpdatingTemplate Then
+       MsgBox "A few more things need to be processed " & vbCrLf & _
+        "to install the macros, and then a file will open which contains " & vbCrLf & _
+        "important instructions about using this template to format " & vbCrLf & _
+        "your Scripture files.", _
+        vbOKOnly, "Template Copied Successfully"
+    Else
+        MsgBox "It looks as if the current version of Smart Interactive Layout Assistant for Scripture " & Spaces & vbCrLf & _
+            "is already installed on your computer.  Next, a file will open which " & vbCrLf & _
+            "contains important instructions about using this template to format " & vbCrLf & _
+            "your Scripture files.", _
+            vbOKOnly, "Template Installed Already"
+    End If
+    
+    CopyAttachSILASTemplateModuleA
+    
+    ' Open a new file based on the template to display the instructions
+    '
+    Dim UsageFile As Variant
+    
+    UsageFile = CurrentPath & UsageDoc
+    Documents.Open FileName:=UsageFile, _
+        ReadOnly:=True, ConfirmConversions:=True, AddToRecentFiles:=True
+    
+    If MacrosOK And ToolbarOK Then
+        MsgBox "The Scripture macro project and toolbar have been copied to your Normal template:" & Spaces & vbCrLf & _
+            NormalTemplate & vbCrLf & vbCrLf & "Please continue reading about how to use this template." & _
+            vbCrLf & "You may print this file if you like for future reference."
+
+        On Error GoTo ErrorSavingNormalTemplate
+        NormalTemplate.Save
+        GoTo CloseInstallDoc
+
+ErrorSavingNormalTemplate:
+        On Error GoTo 0
+        MsgBox _
+            Title:="Install SILAS: Error saving Normal template", _
+            Prompt:="I wasn't able to save your Normal template," & vbCr & _
+                vbTab & Err.Description & vbCr & _
+                "so please read through the information on the screen," & vbCr & _
+                "and then close Word completely before you process any scripture files.", _
+            Buttons:=vbOKOnly
+        ' fallthrough
+CloseInstallDoc:
+        On Error GoTo 0
+        Documents(InstallDoc).Close wdDoNotSaveChanges
+    Else
+        Documents(InstallDoc).Activate
+        Documents(UsageFile).Close wdDoNotSaveChanges
+    End If
+End Sub
+Sub CreateIniFile()
+' use writestream to create "Languages.ini" in the Paratext settings folder if it's missing,
+' in "c:\my paratext projects\" or wherever the Paratext settings folder is on this computer.
+' No languages entered yet
+' First check to see if Languages.ini exists in the folder
+' where the attached template is
+'
+Dim FileSystem As Object
+Dim a As Object
+
+    ActiveWindow.ActivePane.View.Type = wdNormalView
+   
+    Set FileSystem = CreateObject("Scripting.FileSystemObject")
+    If Not FileSystem.FileExists(IniFile) Then
+        
+        Set a = FileSystem.CreateTextFile(IniFile, True)
+        a.Writeline ("; Configuration file for multiple languages being printed from a single computer.")
+        a.Writeline ("; This file must be in the Paratext settings folder:")
+        a.Writeline ("; " & PtPathFromReg)
+        ' a.Writeline ("; Both these files are put in the Paratext settings folder, usually 'C:\My Paratext Projects'")
+        ' a.Writeline (";")
+        a.Writeline ("; Be careful not to have any gaps in the series of language numbers, such as")
+        a.Writeline (";   [Language_1]")
+        a.Writeline (";   [Language_3]")
+        a.Writeline ("; because the process of checking languages will stop as soon as language_2 is missing.")
+        a.Writeline ("")
+        a.Writeline ("[TemplateVersionNumber]")
+        a.Writeline ("SVersion= ")
+        a.Writeline ("Build= ")
+        a.Writeline ("; These are updated by CopyAttachSILASTemplateModule, checked by Install procedure.")
+        a.Writeline ("")
+        a.Writeline ("[IniSetupDate]")
+        a.Writeline ("Date= ")
+        a.Writeline ("; This is for future ref, to do a check for old Lang.ini that may not have all elements.")
+        a.Writeline ("")
+        a.Writeline ("[DefaultPaperSize]")
+        a.Writeline ("; This is set by macro SetDefaultPaperSize.")
+        a.Writeline ("")
+        a.Writeline ("[Messages]")
+        a.Writeline ("")
+        a.Writeline ("[LastBookletSettings]")
+        a.Writeline ("")
+        a.Writeline ("[Language_1]")
+        a.Writeline ("Name=")
+        a.Writeline ("Code=")
+        a.Writeline ("ProjectCode=")
+        a.Writeline ("Province=")
+        a.Writeline ("Country=")
+        a.Writeline ("Font=Times New Roman")
+        a.Writeline ("FontLeading=normal")
+        a.Writeline ("HeadingFont=")
+        a.Writeline ("DefaultSizeInPoints=12")
+        a.Writeline ("PTNoFontChange=False")
+        a.Writeline ("QuotesInProofPrintouts=yes")
+        a.Writeline ("DropCapChapterNumbers=no")
+        a.Writeline ("HeaderOutside=PageNumber")
+        a.Writeline ("HeaderOther=inner")
+        a.Writeline ("")
+        a.Close
+    End If
+End Sub
+Function CheckForNewVersion()
+
+Dim SilasVersionStr As String, SilasBuildStr As String
+Dim NewVersion As Double, OldVersion As Double
+Dim NewBuild As Double, OldBuild As Double
+'Dim fs As Object 'in globals
+Dim ScrTemplatePath As String
+
+    IniFile = PtPathFromReg & "Languages.ini"
+    NewVersion = InternationalCDbl(SilasInstallVersion)
+    Set fs = CreateObject("Scripting.FileSystemObject")
+    
+    If UseUserTemplates Then
+        ScrTemplatePath = NormalTemplate.Path & Application.PathSeparator & ScrTemplateFileName
+    Else
+        ScrTemplatePath = PtSettingsDir & ScrTemplateFileName
+    End If
+    
+    If fs.FileExists(ScrTemplatePath) = True Then
+        'Check previous template version from Inifile setting
+        If fs.FileExists(IniFile) = True Then
+            SilasVersionStr = System.PrivateProfileString(FileName:=IniFile, _
+                Section:="TemplateVersionNumber", Key:="SVersion")
+            If SilasVersionStr = "" Or SilasVersionStr = " " Then SilasVersionStr = "0"
+            OldVersion = InternationalCDbl(SilasVersionStr)
+            
+            If NewVersion < OldVersion Then
+                CheckForNewVersion = False
+            ElseIf NewVersion > OldVersion Then
+                CheckForNewVersion = True
+            ElseIf NewVersion = OldVersion Then
+                ' Check the build number
+                '
+                SilasBuildStr = System.PrivateProfileString(FileName:=IniFile, _
+                    Section:="TemplateVersionNumber", Key:="Build")
+                If SilasBuildStr = "" Or SilasBuildStr = " " Then SilasBuildStr = "0"
+                
+                NewBuild = InternationalCDbl(SilasInstallBuild)
+                OldBuild = InternationalCDbl(SilasBuildStr)
+                
+                If NewBuild < OldBuild Then
+                    CheckForNewVersion = False
+                ElseIf NewBuild >= OldBuild Then
+                    CheckForNewVersion = True
+                End If
+            End If
+        Else: CheckForNewVersion = True
+        End If
+    Else: CheckForNewVersion = True ' Languages.ini doesn't exist yet.
+    End If
+End Function
+Function CheckForPTInstall()
+    IniPT = NormalTemplate.Path & Application.PathSeparator & "ParatextPath.ini"
+    PtPathFromReg = System.PrivateProfileString("", _
+        "HKEY_LOCAL_MACHINE\SOFTWARE\ScrChecks\1.0\Settings_Directory", "")
+
+    If PtPathFromReg <> "" Then
+        CheckPath PtPathFromReg
+        CheckForPTInstall = True
+    Else: CheckForPTInstall = False
+    End If
+End Function
+Sub CheckPath(ByRef Path)
+' Make sure the path variable has a path separator at the end.
+'
+    If Path <> "" _
+    And Right(Path, 1) <> Application.PathSeparator Then
+        Path = Path & Application.PathSeparator
+    End If
+End Sub
+Sub CopyAttachSILASTemplateModuleA()
+'
+' CopyAttachModule Macro for Install Doc
+' Macro recorded 10/10/2005 by Jim Henderson
+'
+Dim PtPathFromReg As String
+Dim IniPTpath As String, IniPTname As String, IniPT As String
+Dim cbar As Object, cbctl As Object, OldCtrl As Object
+Dim mybar As Object
+Dim myControl As Object
+Dim ErrorMessage As String
+
+    Set fs = CreateObject("Scripting.FileSystemobject")
+    IniPTpath = NormalTemplate.Path & Application.PathSeparator
+    IniPTname = "ParatextPath.ini"
+    IniPT = IniPTpath & IniPTname
+
+    If fs.FileExists(IniPT) = True Then
+        PtPathFromReg = System.PrivateProfileString(FileName:=IniPT, _
+            Section:="PTProjects", Key:="Path")
+        CheckPath PtPathFromReg
+    End If
+
+    ' Create Languages.ini in the Paratext settings folder first,
+    ' in case the copy of AttachSILASTemplate doesn't work in Word 2000
+    ' and the user has to copy it manually.
+    '
+    CreateIniFile        ' unless it exists already
+    System.PrivateProfileString(FileName:=IniFile, _
+        Section:="TemplateVersionNumber", Key:="SVersion") _
+        = SilasInstallVersion
+    System.PrivateProfileString(FileName:=IniFile, _
+        Section:="TemplateVersionNumber", Key:="Build") _
+        = SilasInstallBuild
+
+TryToCopy:
+    ' Make Silas toolbar in normal template visible so we can delete it
+    '
+    On Error Resume Next
+    CustomizationContext = NormalTemplate
+    CommandBars("ScriptureNew").Visible = True
+    GoTo TryToolbar
+    
+TryToolbar:
+    ' first delete old ScriptureNew from Normal if it's there
+    '
+    On Error Resume Next
+    Application.OrganizerDelete _
+        Source:=NormalTemplate, _
+        Name:="ScriptureNew", _
+        Object:=wdOrganizerObjectCommandBars
+
+    On Error GoTo -1:  On Error GoTo ErrorDeletingToolbar
+
+    Application.OrganizerDelete _
+    Source:=NormalTemplate, _
+    Name:="AttachScr", _
+    Object:=wdOrganizerObjectCommandBars
+    GoTo CopyToolbar
+
+ErrorDeletingToolbar:
+'    MsgBox "Couldn't remove toolbar AttachScr from Normal template." & Spaces
+    GoTo CopyToolbar
+    
+CopyToolbar:
+    On Error GoTo -1:  On Error GoTo ErrorCopyingToolbar
+
+    Application.OrganizerCopy Source:= _
+        ThisDocument.FullName, _
+        Destination:=NormalTemplate, _
+        Name:="AttachScr", Object:=wdOrganizerObjectCommandBars
+    CustomizationContext = ActiveDocument
+    Set OldCtrl = CommandBars("AttachScr").Controls(1)
+
+    If OldCtrl.Tag = "AttachTemplate" Then
+        OldCtrl.CopyFace
+    End If
+    
+    CustomizationContext = NormalTemplate
+    CommandBars("AttachScr").Visible = True
+    ToolbarOK = True
+    GoTo AddAttachButtonToToolsMenu
+    
+ErrorCopyingToolbar:
+    MsgBox "Error trying to copy toolbar called " & _
+        Chr(34) & "AttachScr" & Chr(34) & vbCrLf & _
+        " from this file (" & InstallDocName & ")" & vbCrLf & _
+        " to " & NormalTemplate & vbCrLf & _
+        "If it is not in your Normal template already, please copy it there manually," & _
+        Spaces & vbCrLf & _
+        "following the instructions at the end of this file, 'Install Silas.doc'"
+    ToolbarOK = False
+    GoTo AddAttachButtonToToolsMenu
+
+AddAttachButtonToToolsMenu:
+    On Error GoTo -1:  On Error GoTo ErrorMakingMenuItem
+    
+    ' first delete if it is in Normal Tools menu (.Tag value IDs it)
+    '
+    CustomizationContext = NormalTemplate
+    Set mybar = CommandBars("Tools")
+    
+    For Each cb In CommandBars("Tools").Controls
+        If cb.Tag = "AttachTemplate" Then
+            cb.Delete
+        End If
+    Next cb
+
+    'now add item to end of Normal-Tools menu
+    '
+    Set mybar = CommandBars("Tools")
+    Set myControl = mybar.Controls _
+        .Add(Type:=msoControlButton)
+    With myControl
+        .OnAction = "AttachSILASTemplate"
+        .Caption = "Attach SILAS &Formatting Template"
+        .TooltipText = "Attach Smart Interactive Layout Assistant for Scripture"
+        .FaceId = 0
+        .Tag = "AttachTemplate"
+        .Style = msoButtonAutomatic
+        .Visible = True
+        .BeginGroup = True
+'        .Temporary = False
+        .PasteFace
+    End With
+    
+    GoTo RemoveMacroProject
+    
+ErrorMakingMenuItem:
+    MsgBox "Error trying to make menu item called " & _
+        Chr(34) & "Attach SILAS Formatting Template" & Chr(34) & vbCrLf & _
+        " in your Normal Template Tools Menu" & vbCrLf & _
+        "If it is not in your Normal template already, you might like to make it there manually." & Spaces
+    GoTo RemoveMacroProject
+
+RemoveMacroProject:
+    ' In case the macro project is there already, delete it first.
+    '
+    On Error GoTo -1:  On Error GoTo MacroProjectDeleteError1
+    '
+    ' The old name first:
+    '
+    CustomizationContext = NormalTemplate
+    Application.OrganizerDelete _
+        Source:=NormalTemplate, _
+        Name:="AttachUSFMTemplate", Object:=wdOrganizerObjectProjectItems
+        ' Fallthrough instead of GoTo CopyMacroProject
+        
+MacroProjectDeleteError1:
+    On Error GoTo -1:  On Error GoTo MacroProjectDeleteError2
+    '
+    ' Now try to delete the new name.
+    '
+    CustomizationContext = NormalTemplate
+    Application.OrganizerDelete _
+        Source:=NormalTemplate, _
+        Name:="AttachSILASTemplate", Object:=wdOrganizerObjectProjectItems
+        GoTo CopyMacroProject
+        
+MacroProjectDeleteError2:
+    ' ErrorMessage = "Couldn't remove AttachSILASTemplate project from your Normal template --" & Spaces & vbCr & _
+    '    "perhaps it wasn't in your Normal template anyway."
+    ' MsgBox ErrorMessage & vbCr & Err.Description
+    GoTo CopyMacroProject:
+    
+CopyMacroProject:
+    On Error GoTo -1:  On Error GoTo ErrorCopyingMacro
+
+    Application.OrganizerCopy _
+        Source:=ActiveDocument.FullName, _
+        Destination:=NormalTemplate, _
+        Name:="AttachSILASTemplate", _
+        Object:=wdOrganizerObjectProjectItems
+    MacrosOK = True
+    GoTo End_OK
+    
+ErrorCopyingMacro:
+    MsgBox "Error trying to copy macro module " & _
+        Chr(34) & "AttachSILASTemplate" & Chr(34) & vbCrLf & _
+        " from this file (" & InstallDocName & ")" & vbCrLf & _
+        " to " & NormalTemplate & vbCrLf & _
+        "The system error message is:" & vbCr & vbTab & _
+        Err.Description & vbCr & vbCr & _
+        "If it is not in your Normal template already, please copy it there manually," & Spaces & vbCr & _
+        "as described at the end of this file, 'Install Silas.doc'"
+    MacrosOK = False
+    GoTo End_All
+    
+End_OK:
+    On Error GoTo 0
+    ' Fallthrough
+
+End_All:
+    On Error GoTo 0
+    ActiveWindow.ActivePane.View.Type = PageOrPrintView
+    ActiveWindow.ActivePane.View.Zoom.PageFit = wdPageFitTextFit
+End Sub
+Function InstallFile(ByVal DstPath As String, _
+                    FileName As String, _
+                    CustomFile As Boolean, _
+                    Report As String, _
+                    MoveAside As Boolean) As Boolean
+    ' Install the named file from the current directory
+    ' to the destination path
+    '
+    ' If MoveAside Then
+    '   don't actually copy the new file to DstPath.
+    '
+    '
+    ' If the file exists there already,
+    ' and has a different modification date,
+    '   move it to a [new] folder "old versions" first
+    '   and rename it there including date in the name.
+    '
+    '
+    Dim SrcPath As String
+    Dim DateAndTime As String
+    Dim DestinationPathAndFilename As String
+    Dim SourcePathAndFilename As String
+    Dim BackupFolderExists As Boolean
+    Dim SrcFile As Object   ' Source File
+    Dim DstFile As Object   ' Destination File
+    Dim SrcDate As String   'kim added 12/1
+    Dim DstDate As String   'kim added 12/1
+    Dim DstFileExists As Boolean
+    Dim OldVersionsPath As String
+    Dim BaseName As String
+    Dim ext As String
+    Dim CopyTheFile As Boolean
+    
+    Set fs = CreateObject("Scripting.FileSystemobject")
+    
+    SrcPath = ThisDocument.Path & Application.PathSeparator
+    SourcePathAndFilename = SrcPath & FileName
+    
+    If fs.FileExists(SourcePathAndFilename) Then
+        Set SrcFile = fs.GetFile(SourcePathAndFilename)
+        SrcDate = SrcFile.DateLastModified
+    Else
+        MsgBox "Sorry the file I am trying to install," & Spaces & vbCr & vbTab & _
+            SourcePathAndFilename & vbCr & _
+            "does not exist. Continuing . . ."
+        Report = Report & _
+            FileName & " does not exist in " & SrcPath & vbCrLf
+        InstallFile = False
+        Exit Function
+    End If
+    
+    If Right(DstPath, 1) <> Application.PathSeparator Then
+        DstPath = DstPath & Application.PathSeparator
+    End If
+    
+    DestinationPathAndFilename = DstPath & FileName
+    
+    If fs.FileExists(DestinationPathAndFilename) Then DstFileExists = True
+    
+    If MoveAside _
+    Or DstFileExists Then
+            'Don't overwrite files the user is expected to customize.
+            '
+            If CustomFile Then
+               Report = Report & _
+                  FileName & " is already available in the folder '" & _
+                  DstPath & "'" & vbCr & _
+                  "(You can find a 'clean' copy in " & SrcPath & " if you need it.)" & vbCrLf & vbCrLf
+               InstallFile = True
+               If Not MoveAside Then Exit Function
+            End If
+
+        If DstFileExists Then
+            Set DstFile = fs.GetFile(DestinationPathAndFilename)
+            DstDate = DstFile.DateLastModified
+        End If
+
+        ' if MoveAside or SrcDate not the same as DstDate
+        '   move DstFile to "old versions" folder & rename with date
+        '   (or rename in place with date if we can't make the folder)
+        '   if not MoveAside then copy SrcFile to Destination.
+        '
+        If MoveAside _
+        Or (SrcDate <> DstDate) Then
+            OldVersionsPath = DstPath & "old versions" & Application.PathSeparator
+            
+            If fs.FolderExists(OldVersionsPath) = False Then
+                On Error GoTo MakeOldVersionsFolderError
+                fs.CreateFolder (OldVersionsPath)
+            End If
+
+            OldVersionsFolderOK = True
+            GoTo ProcessFiles
+            
+MakeOldVersionsFolderError:
+            On Error GoTo 0
+            MsgBox "Sorry, I wasn't able to make the folder:" & Spaces & vbCrLf & _
+                OldVersionsPath & vbCrLf & _
+                "but we'll continue anyway."
+            OldVersionsFolderOK = False
+' fallthrough
+
+ProcessFiles:
+            On Error GoTo 0
+            DateAndTime = " replaced " & _
+                Format(Now, "dd-Mmm-yyyy") & _
+                " at " & Format(Now, "hhmm") & "."
+
+            BaseName = fs.GetBaseName(SourcePathAndFilename)
+            ext = fs.GetExtensionName(SourcePathAndFilename)
+            
+            If DstFileExists Then
+                If OldVersionsFolderOK Then
+                    fs.MoveFile DestinationPathAndFilename, _
+                                OldVersionsPath
+    
+                    Name OldVersionsPath & FileName _
+                        As OldVersionsPath & _
+                            BaseName & DateAndTime & ext
+                Else    ' we weren't able to make the "old versions" folder
+                    Name DestinationPathAndFilename _
+                        As DstPath & BaseName & _
+                            DateAndTime & ext
+                End If
+            End If
+            
+            CopyTheFile = True
+        Else    ' the modification dates are identical
+            Report = Report & _
+                FileName & ": you have this version already." & vbCrLf
+        End If
+    Else    ' the file is not in the destination folder yet
+        CopyTheFile = True
+    End If
+    
+    If CopyTheFile _
+    And Not MoveAside Then
+        ' Now to copy the file
+        '
+        fs.CopyFile SourcePathAndFilename, DstPath, True
+        Report = Report & _
+            FileName & " copied to " & DstPath & vbCrLf
+    End If
+    
+    InstallFile = True
+End Function
+Function InternationalCDbl(ByVal Value As String) As Double
+' Convert the string argument to a double,
+' even where the locale is other than English,
+' and the decimal separator is not "."
+'
+Dim DecimalChar As String
+Dim DecimalPosn As Long
+Dim Adjusted As String
+
+DecimalChar = Application.International(wdDecimalSeparator)
+DecimalPosn = InStr(1, Value, ".")
+
+If DecimalPosn > 0 Then
+    Adjusted = Left(Value, (DecimalPosn - 1)) & DecimalChar & _
+                Right(Value, (Len(Value) - DecimalPosn))
+Else
+    Adjusted = Value
+End If
+
+InternationalCDbl = CDbl(Adjusted)
+
+End Function
+
+

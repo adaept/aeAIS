@@ -1,0 +1,968 @@
+Attribute VB_Name = "AttachSILASTemplate"
+' Installs SILAS -- Smart Interactive Layout Assistant for Scripture
+' which is a template for formatting RTF files produced by Paratext or other programs,
+' using USFM.sty up to version SilasVersion
+' August 2005, by Jim Henderson and Kim Blewett
+
+Public Const UseUserTemplates As Boolean = True
+Public Const SilasVersion As String = "2.35"
+Public Const SilasBuild As String = "1.22"
+Public Const LatestUSFMVersion As String = "2.35"
+Public Const InstallingBookletVersion As String = "2.56"
+Public Const ScrTemplateFileName = "Silas.dot"
+Public Const LanguageFileName = "Languages.ini"
+Public Const PrintOrPageView As Integer = 3
+Public Const strAspaces As String = "              "
+
+Public PtSettingsDir As String
+Public InstallFolder As String
+Public ExportedFrom As String  ' Program the data came from
+Dim fs As Object, f As Object
+
+Option Explicit
+Const strGeneralReinstall_A As String = _
+    "Please locate the file 'Silas-v" & SilasVersion & "-" & SilasBuild & _
+    "-Setup.exe" & "',                 " & vbCrLf & _
+    "then close all Word windows and run that file to install this template properly." & vbCr & _
+    "Please ask for technical assistance if you need it."
+Sub AttachSILASTemplate()
+ '
+' Attach new template, auto update
+
+Dim IniPT As String
+Dim ChangeStyles As String
+Dim ChangeStylesFolder As String
+Dim DoReplaced_Styles As Boolean
+
+    ExportedFrom = "Paratext"   ' default assumption
+    
+    ' first check to make sure PT path is registered properly
+    '
+    IniPT = NormalTemplate.Path & Application.PathSeparator & "ParatextPath.ini"
+    Set fs = CreateObject("Scripting.FileSystemObject")
+    If Not fs.FileExists(IniPT) Then
+        Dim Msg As String, Title As String, Result As Integer
+        Msg = "I expected to find a file called 'ParatextPath.ini' in the folder" & vbCr & _
+            "where Word looks for 'User Templates' " & vbCr & _
+            "(" & NormalTemplate.Path & " on your computer)." & strAspaces & vbCr & vbCr & _
+            strGeneralReinstall_A
+        Title = "Attach path failed" & strAspaces
+        Result = MsgBox(Msg, , Title)
+        Exit Sub
+    End If
+    
+    PtSettingsDir = System.PrivateProfileString( _
+                FileName:=IniPT, _
+                Section:="PTProjects", Key:="Path")
+    CheckPath PtSettingsDir
+    InstallFolder = System.PrivateProfileString( _
+                FileName:=IniPT, _
+                Section:="Template", Key:="InstallFolder")
+    CheckPath InstallFolder
+    
+' then set variable for font that comes from PT, for later question.
+Dim FileFontFromPT As String
+Dim StyleName As String
+Dim v As Variable
+    FileFontFromPT = ""
+    
+' Now check to see if PT font has already been found for this document.
+    For Each v In ActiveDocument.Variables
+        If v.Name = "PTFont" Then
+            GoTo Attach
+            Exit For
+        End If
+    Next v
+        
+  'If not, check version of style names
+  ' and find font used in normal paragraph style
+  '
+    Selection.HomeKey Unit:=wdStory
+    
+    If CheckUSFMVersion( _
+        FileFontFromPT, ChangeStyles, ChangeStylesFolder, _
+        DoReplaced_Styles, ExportedFrom) Then
+        GoTo FoundFont
+    Else
+        GoTo EndOfSub
+    End If
+    
+FoundFont:
+    ActiveDocument.Variables.Add Name:="PTFont", Value:=FileFontFromPT
+    VariableSet "ExportedFrom", ExportedFrom
+    VariableSet "ChangeStyles", ChangeStyles
+    ' fallthrough
+
+Attach:
+    Dim ScrTemplatePath As String
+    
+    If UseUserTemplates Then
+        ScrTemplatePath = NormalTemplate.Path & Application.PathSeparator & ScrTemplateFileName
+    Else
+        ScrTemplatePath = PtSettingsDir & ScrTemplateFileName
+    End If
+    
+    ' Add and update styles from the template
+    '
+    With ActiveDocument
+        .UpdateStylesOnOpen = True
+        .AttachedTemplate = ScrTemplatePath
+    End With
+    
+    ' Now turn off auto-updating of styles back to the template.
+    '
+    With ActiveDocument
+        .UpdateStylesOnOpen = False
+        .AttachedTemplate = ScrTemplatePath
+    End With
+    
+    ' If this data came from Translation Editor,
+    ' or from an old version of USFM.sty,
+    '   change the style names
+    '
+    If ChangeStyles <> "" _
+    Or DoReplaced_Styles Then
+        ActiveWindow.ActivePane.View.Type = wdNormalView
+        Application.StatusBar = "Updating style names from the file " & ChangeStyles & "."
+        ' Application.ScreenUpdating = False
+
+        StyleNames_Change ChangeStyles, ChangeStylesFolder, _
+                            DoReplaced_Styles   ' give the old styles the new names.
+        ' We need to attach the template again to correct the styles' attributes
+        '
+        With ActiveDocument
+            .UpdateStylesOnOpen = True
+            .AttachedTemplate = ScrTemplatePath
+        End With
+        
+        With ActiveDocument
+            .UpdateStylesOnOpen = False
+            .AttachedTemplate = ScrTemplatePath
+        End With
+    End If
+    
+    ActiveDocument.StoryRanges(wdMainTextStory).Select
+    Selection.HomeKey Unit:=wdStory
+    ' ActiveWindow.ActivePane.Close
+    ActiveWindow.ActivePane.View.Type = PrintOrPageView
+    On Error GoTo -1:  On Error GoTo RunMacroFailed
+    
+' Word97 won't run these
+    If Val(Application.Version) >= 9 Then
+        Application.Run MacroName:=ActiveDocument.AttachedTemplate.Name & "!SCR.LangData.LoadLanguageData"
+        Application.Run MacroName:=ActiveDocument.AttachedTemplate.Name & "!SCR.Gen.SetDefaultPaperSize"
+        GoTo EndOfSub
+    Else:
+        MsgBox _
+            Title:="Old version of Word", _
+            Prompt:="You are running version " & Application.Version & _
+                " of Word, which is older than Word 2000," & vbCr & _
+                "so I can't run macros from the newly-attached template." & vbCr & vbCr & _
+                "Please open the menu 'ScrLanguages' and do the job called " & vbCrLf & _
+                vbTab & "'Set Language Project For This Text'."
+        GoTo EndOfSub
+    End If
+    
+RunMacroFailed:
+    On Error GoTo 0
+    MsgBox "I wasn't able to run the macros 'SetDefaultPaperSize' and 'LoadLanguageData'." & vbCrLf & vbCrLf & _
+        "If you have a file based on '" & ScrTemplateFileName & "' open in Word, please close it, " & vbCrLf & _
+        "then redo the job called: 'AttachSILASTemplate'. " & vbCrLf & vbCrLf & _
+        "Otherwise, please open the menu 'ScrLanguages' and do the job called " & vbCrLf & _
+        vbTab & "'Set Language and Paper Size'."
+EndOfSub:
+    On Error GoTo 0
+End Sub
+Sub CheckPath(ByRef Path)
+' Make sure the path variable has a path separator at the end.
+'
+    If Path <> "" _
+    And Right(Path, 1) <> Application.PathSeparator Then
+        Path = Path & Application.PathSeparator
+    End If
+End Sub
+Function CheckUSFMVersion( _
+            ByRef ParaStyleFont As String, _
+            ByRef ChangeStyles As String, _
+            ByRef ChangeStylesFolder As String, _
+            ByRef DoReplaced_Styles As Boolean, _
+            ByRef ExportedFrom As String) As Boolean
+' Returns false if this is not from a Scripture editing program.
+' If paragraph style found,
+'   sets ParaStyleFont to the font name.
+' Revised for non-PT files JH Dec 06: If Translation Editor styles
+'   or old styles found, sets ChangeStyles to the filename of styles
+'   to load and change.
+' written by Jim Henderson, revised by Kim Blewett Oct 06.
+'
+Dim DefinitiveStyle As String
+Dim ThisStyle As String
+Dim iotFont As String
+
+    ChangeStyles = ""
+    ChangeStylesFolder = InstallFolder
+    ParaStyleFont = ""
+    
+    ' A comma in a Word stylename has a special effect:
+    ' You can do Ctrl-Shift-S to step into the style box,
+    ' then if you have a style called "rj, right justified",
+    ' you can type "rj" and hit the Enter key to select that style.
+    ' It has a bad side effect, however:
+    ' If you have stylenames with commas in them in the document,
+    ' and attach a template with similar stylenames,
+    ' the existing stylenames get the new similar ones added to them,
+    ' so we'll remove commas from all stylenames first:
+    '
+    RemoveCommasFromStylenames
+    
+    ' Find out if this file came from USFM_draft.sty,
+    ' and set a variable accordingly.
+    '
+    VariableSet "USFM_draft", "no"
+    On Error GoTo -1: On Error GoTo USFM_draft
+    iotFont = ActiveDocument.Styles("iot - Introduction - Outline Title").Font.Name
+    GoTo notUSFM_draft
+
+USFM_draft:
+    VariableSet "USFM_draft", "yes"
+    ' fallthrough
+    
+notUSFM_draft:
+    On Error GoTo -1: On Error GoTo 0
+    
+    ' For each kind of styles
+    '   Set the place to go if its paragraph style doesn't exist
+    '   Report the font for that paragraph style.
+    '   If there wasn't an error, report the kind of changes we'll need
+    '       Set the function's return value as True.
+    '       Turn off the error trap.
+    '       Leave the function.
+    '
+    On Error GoTo -1: On Error GoTo NotPNG
+    ' Text formatted with the PNG template will have a style called "Bar-sc".
+    ' If there is no error, behave as if this file is from the PNG template.
+    '
+    DefinitiveStyle = ActiveDocument.Styles("Bar-sc").Font.Name
+    ParaStyleFont = ActiveDocument.Styles("Paragraph").Font.Name
+    ChangeStyles = "PNG_Styles.txt"
+    ExportedFrom = "files based on the template SCRPNG98.dot"
+    GoTo exitTrue
+
+NotPNG:
+    On Error GoTo -1: On Error GoTo MaybeNotSCR_V2
+    ' Files based on the 1998 template, SCR_V2.dot
+    ' will have a style called "Implied Info".
+    ' If there is no error, behave as if this file is from SCR_V2.dot.
+    '
+    DefinitiveStyle = ActiveDocument.Styles("Implied Info").Font.Name
+    ParaStyleFont = ActiveDocument.Styles("Paragraph").Font.Name
+    ChangeStyles = "SCR_V2_Styles.txt"
+    ExportedFrom = "files based on the template SCR_V2.dot"
+    GoTo exitTrue
+
+MaybeNotSCR_V2:
+    On Error GoTo -1: On Error GoTo NotSCR_V2
+    ' Files based on a template like SCR_V2.dot
+    ' will have a style called "BT Paragraph".
+    ' If there is no error, behave as if this file is from SCR_V2.dot.
+    '
+    DefinitiveStyle = ActiveDocument.Styles("BT Paragraph").Font.Name
+    ParaStyleFont = ActiveDocument.Styles("Paragraph").Font.Name
+    ChangeStyles = "SCR_V2_Styles.txt"
+    ExportedFrom = "files based on the template SCR_V2.dot"
+    GoTo exitTrue
+
+NotSCR_V2:
+    On Error GoTo -1: On Error GoTo NotSCR_old
+    ' Files based on an old template like SCR_V2.dot or SCR_PN95.dot
+    ' will have a style called "Chapter Number".
+    ' If there is no error, behave as if this file is from such a template.
+    '
+    DefinitiveStyle = ActiveDocument.Styles("Chapter Number").Font.Name
+    ParaStyleFont = ActiveDocument.Styles("Paragraph").Font.Name
+    ChangeStyles = "SCR_old_Styles.txt"
+    ExportedFrom = "files based on an old template like SCR_PN95.dot"
+    GoTo exitTrue
+
+NotSCR_old:
+    On Error GoTo -1: On Error GoTo Not2_101
+    ' If there is no error, this file is from one of the latest versions of USFM.sty.
+    '
+    ' USFM 2.101 posted on October 10th, 2007 changed the style for \ca,
+    ' so that's the definitive stylename for 2.101 of Oct 10, 2007
+    ' through to 2.104
+    '
+    DefinitiveStyle = ActiveDocument.Styles("ca...ca* - Chapter Number - Alternate").Font.Name
+    ParaStyleFont = ActiveDocument.Styles("p - Paragraph - Normal - First Line Indent").Font.Name
+    ChangeStyles = "Custom_Styles.txt"
+    ChangeStylesFolder = PtSettingsDir
+    DoReplaced_Styles = True
+    GoTo exitTrue
+
+Not2_101:
+    On Error GoTo -1: On Error GoTo Not2_1
+    ' If there is no error, this file is from the version of USFM.sty,
+    ' USFM 2.1 that came out on the Pt 6.1 CD
+    ' It changed the style for \rq, so that's the definitive stylename for 2.1.
+    '
+    DefinitiveStyle = ActiveDocument.Styles("rq...rq* - Cross Reference - Inline Quotation References").Font.Name
+    ParaStyleFont = ActiveDocument.Styles("p - Paragraph - Normal - First Line Indent").Font.Name
+    ChangeStyles = "2.1_Styles.txt"
+    DoReplaced_Styles = True
+    GoTo exitTrue
+
+Not2_1:
+    On Error GoTo -1: On Error GoTo Not2_05
+    ' If there is no error, this file is from version 2.05 or later of USFM.sty.
+    '
+    ' USFM 2.05 introduced \rq as a paragraph style,
+    ' so that's the definitive stylename for 2.05.
+    '
+    DefinitiveStyle = ActiveDocument.Styles("rq - Cross Reference - Inline Quotation References").Font.Name
+    ParaStyleFont = ActiveDocument.Styles("p - Paragraph - Normal - First Line Indent").Font.Name
+    ChangeStyles = "2.05_Styles.txt"
+    DoReplaced_Styles = True
+    GoTo exitTrue
+
+Not2_05:
+    On Error GoTo -1: On Error GoTo NotTE
+    ' Output from Translation Editor will have a style called "Title Main".
+    ' If there is no error, behave as if this file is from TE.
+    '
+    DefinitiveStyle = ActiveDocument.Styles("Title Main").Font.Name
+    ParaStyleFont = ActiveDocument.Styles("Paragraph").Font.Name
+    ChangeStyles = "TE_Styles.txt"
+    DoReplaced_Styles = True
+    ExportedFrom = "Translation Editor"
+    GoTo exitTrue
+
+NotTE:
+    On Error GoTo -1: On Error GoTo NotWordSend
+    ' Output from WordSend will have a style called "Footnote Deuterocanon".
+    ' If there is no error, behave as if this file is from WordSend.
+    '
+    DefinitiveStyle = ActiveDocument.Styles("Footnote Deuterocanon").Font.Name
+    ParaStyleFont = ActiveDocument.Styles("Normal").Font.Name
+    ChangeStyles = "WordSend_Styles.txt"
+    DoReplaced_Styles = True
+    ExportedFrom = "WordSend"
+    GoTo exitTrue
+
+NotWordSend:
+    On Error GoTo -1: On Error GoTo NotOriginal
+    '
+    ' The original set of stylenames had parentheses around the code letters.
+    '
+    ParaStyleFont = ActiveDocument.Styles("(p) Paragraph - Normal - First Line Indent").Font.Name
+    ChangeStyles = "Original_Styles.txt"
+    DoReplaced_Styles = True
+    CheckUSFMVersion = True
+    On Error GoTo 0
+    GoTo OldVersion
+
+NotOriginal:
+    On Error GoTo -1: On Error GoTo NotRecent
+    '
+    ' Versions of USFM between the original and 2.05 had stylenames without
+    ' parentheses around the code letters.
+    '
+    ParaStyleFont = ActiveDocument.Styles("p - Paragraph - Normal - First Line Indent").Font.Name
+    ChangeStyles = "Recent_Styles.txt"
+    DoReplaced_Styles = True
+    GoTo exitTrue
+    
+NotRecent:
+    ' If any of the Adapt It Interlinear styles exists
+    '   process the tables to make them auto-fit to data.
+    '
+    On Error GoTo -1: On Error GoTo NotAIinterlinear_Source
+    ThisStyle = ActiveDocument.Styles("Source Language").Font.Name
+    GoTo ProcessAIinterlinear
+
+NotAIinterlinear_Source:
+    On Error GoTo -1: On Error GoTo NotAIinterlinear_Target
+    ThisStyle = ActiveDocument.Styles("Target Language").Font.Name
+    GoTo ProcessAIinterlinear
+    
+NotAIinterlinear_Target:
+    On Error GoTo -1: On Error GoTo NotAIinterlinear_Gloss
+    ThisStyle = ActiveDocument.Styles("Gloss Language").Font.Name
+    GoTo ProcessAIinterlinear
+    
+NotAIinterlinear_Gloss:
+    On Error GoTo 0
+    GoTo NotFormattedScripture
+
+ProcessAIinterlinear:
+    On Error GoTo 0
+    CheckUSFMVersion = False
+    MsgBox "This file seems to be interlinear output from Adapt It." & vbCrLf & vbCrLf & _
+        "The template you are trying to attach, " & vbCrLf & _
+        vbTab & ScrTemplateFileName & vbCrLf & _
+        "can still help you with formatting this file." & vbCrLf & vbCrLf & _
+        "Now I'll make the tables autofit the text to reduce word wraps in cells." _
+        , vbOKOnly, "Adapt It interlinear data found . . ."
+    ProcessAdaptItInterlinear
+    ExportedFrom = "Adapt It"
+    Exit Function
+    
+NotFormattedScripture:
+    On Error GoTo 0
+    
+    ' Maybe it's a text file in USFM.
+    ' Look for a verse code
+    '
+    Selection.Find.ClearFormatting
+    With Selection.Find
+        .Text = "\v"
+        .Replacement.Text = ""
+        .Forward = True
+        .Wrap = wdFindContinue
+        .Format = False
+        .MatchCase = False
+        .MatchWholeWord = False
+        .MatchWildcards = False
+        .MatchSoundsLike = False
+        .MatchAllWordForms = False
+    End With
+    
+    If Selection.Find.Execute Then
+        VariableSet "USFM2Styles", "needed"
+        CheckUSFMVersion = True
+        Exit Function
+    End If
+    
+    CheckUSFMVersion = False
+    
+    MsgBox _
+        Prompt:="I can't find the standard USFM stylenames in your document. " & vbCr & _
+        "Perhaps you didn't run the setup program to install 'Silas' --" & vbCr & _
+        "Smart Interactive Layout Assistant for Scripture." & vbCr & _
+        "When you do that, it will copy the latest version of 'USFM.sty'" & vbCr & _
+        "to your Paratext settings folder ('C:\My Paratext Projects' by default)." & vbCr & _
+         vbCrLf & _
+        "Then make sure that USFM.STY is set as the 'stylesheet' for your " & vbCrLf & _
+        "Paratext Scripture project:" & vbCrLf & vbCrLf & _
+        "In Paratext, do Tools-->Project Properties and Settings," & vbCrLf & _
+        "then look at the Stylesheet box. If you make a change here, " & vbCrLf & _
+        "you will need to close the Paratext program and then" & vbCrLf & _
+        "run it again to get the stylesheet working.", _
+        Title:="Silas -- Smart Interactive Layout Assistant for Scripture"
+        
+    If MsgBox("If your current file is NOT a Scripture portion exported from Paratext 6 or later, " & vbCrLf & _
+        "you may attach the Silas template anyway. " & vbCrLf & _
+        "(Some features won't work properly, because of different style names.)" & vbCr & _
+        "Do you wish to attach the SILAS template now? " & vbCrLf & vbCrLf & _
+        "If you choose " & Chr(34) & "NO" & Chr(34) & " or  " & Chr(34) & "CANCEL" & _
+        Chr(34) & " here, the template will not be attached.", _
+            vbYesNoCancel + vbDefaultButton2) = vbYes Then
+        ParaStyleFont = ActiveDocument.Styles(wdStyleNormal).Font.Name
+        CheckUSFMVersion = True
+    End If
+    Exit Function
+
+exitTrue:
+    On Error GoTo 0
+    CheckUSFMVersion = True
+    Exit Function
+
+OldVersion:
+    Exit Function
+End Function
+Sub ReadStyleChanges(ByRef ChangeStyles As String, ByRef ChangeStylesFolder As String, _
+                        ByRef ReplaceArray() As String, ByRef WithArray() As String, _
+                        ByRef Links() As Boolean, ByRef ProcessReport As String, _
+                        ByRef n As Integer, ByRef NrLines As Integer)
+    Dim ReplaceStyle As String
+    Dim ReplaceStyleMissing As Boolean
+       
+    Dim WithStyle As String
+       
+    Const delta As Integer = 32
+    Dim StyleLine As String
+    Dim Position As Long
+    Dim LineReport As String
+    Dim OldType As String
+    Dim NewType As String
+       
+    Dim FileNo As Integer
+    FileNo = FreeFile
+    Dim LineNr As Long
+    Dim Problem As String
+    
+    LineNr = 1
+    On Error GoTo FileOpenFailed
+    Open ChangeStylesFolder & ChangeStyles For Input As #FileNo
+    On Error GoTo 0
+       
+       Do While Not EOF(FileNo)
+          Line Input #FileNo, StyleLine
+          
+          If StyleLine Like "*;*" Then
+            Position = InStr(StyleLine, ";")
+            
+            If Position > 0 Then
+                ReplaceStyle = Trim(Left(StyleLine, Position - 1))
+                If Len(ReplaceStyle) = 0 Then GoTo StyleMissing
+                WithStyle = Trim(Right(StyleLine, Len(StyleLine) - Position))
+                If Len(WithStyle) = 0 Then GoTo StyleMissing
+
+                LineReport = "Line: " & LineNr & _
+                    " changing '" & ReplaceStyle & "' to '" & WithStyle & "' "
+                Problem = ""
+                ReplaceStyleMissing = False
+                
+                On Error GoTo -1: On Error GoTo NoOldStyle
+                OldType = ActiveDocument.Styles(ReplaceStyle).Type
+                GoTo CheckNewType
+                
+NoOldStyle:
+                ' Problem = "'from' style missing "
+                ReplaceStyleMissing = True
+                'fallthrough
+CheckNewType:
+                On Error GoTo -1: On Error GoTo NoNewStyle
+                NewType = ActiveDocument.Styles(WithStyle).Type
+                GoTo NewStyleOK
+                
+NoNewStyle:
+                If Problem <> "" Then Problem = Problem & " and "
+                Problem = Problem & vbCrLf & "'to' style missing "
+                'fallthrough
+NewStyleOK:
+                If Problem <> "" Then
+                    MsgBox ProcessReport & LineReport & Problem & vbCr & _
+                        "This change will not be done.", vbOKOnly, "Style problem . . ."
+                    GoTo StyleMissing
+                End If
+                
+                If ReplaceStyleMissing = True Then GoTo StyleMissing
+                
+                If (NrLines - n) < 1 Then
+                    NrLines = NrLines + delta
+                    ReDim Preserve ReplaceArray(NrLines)
+                    ReDim Preserve WithArray(NrLines)
+                    ReDim Preserve Links(NrLines)
+                End If
+                
+                ReplaceArray(n) = ReplaceStyle
+                WithArray(n) = WithStyle
+                Links(n) = False
+                n = n + 1
+StyleMissing:
+            End If
+          End If
+          LineNr = LineNr + 1
+       Loop
+    Close #FileNo
+    Exit Sub
+    
+FileOpenFailed:
+    On Error GoTo 0
+
+    If ChangeStylesFolder = PtSettingsDir Then
+        MsgBox "O' oh. I wasn't able to open the file " & ChangeStyles & _
+        "in the folder '" & ChangeStylesFolder & "'.", vbOKOnly, _
+        "Error -- Couldn't open update file for styles."
+    Else
+        If InstallFolder = "" Then
+            MsgBox "O' oh. It looks as if you didn't run the macro button 'Install' in the file 'Install Silas.doc'." & vbCr & _
+            "I need to know the install folder for the Silas package," & vbCr & _
+            "so I can find the file " & ChangeStyles & _
+            "which is usually in the folder 'C:\Program Files\Silas'.", vbOKOnly, _
+            "Error -- where is the installation folder?"
+        Else
+            MsgBox "Couldn't open the style update file " & InstallFolder & ChangeStyles
+        End If
+    End If
+End Sub
+Sub StyleNames_Change(ChangeStyles As String, ChangeStylesFolder As String, _
+                        DoReplaced_Styles As Boolean)
+    ' Open the file named in ChangeStyles
+    '   and for each line,
+    '       split at ";" into ReplaceStyle and WithStyle
+    '       and add to the array, expanding the array as necessary.
+    ' Close the file
+    '
+    ' if DoReplaced_Styles, do the same for that file.
+    '
+    ' For each row,
+    '   compare the With element with all following ones
+    '       if they match, mark Links as true for each row
+    '
+    ' For each row in the array,
+    '   do StyleNames_RenameText(ReplaceStyle, WithStyle, Links)
+    
+    Dim ReplaceArray() As String
+    Dim WithArray() As String
+    Dim Links() As Boolean
+    Dim HasFootnotes As Boolean
+    Dim HasEndnotes As Boolean
+    
+    Dim n As Integer
+    Dim other As Integer
+    Dim NrLines As Integer
+    Const ReplacedStyles As String = "Replaced_Styles.txt"
+    Dim ProcessReport As String
+    Dim Part As Integer
+    Dim Whole As Integer
+    
+    If ActiveDocument.Footnotes.Count > 0 Then HasFootnotes = True
+    If ActiveDocument.Endnotes.Count > 0 Then HasEndnotes = True
+
+    n = 1
+    
+    ProcessReport = "I'm changing styles based on the file '" & _
+        ChangeStyles & "'," & vbCr & _
+        "which is in the folder '" & ChangeStylesFolder & "'." & vbCr & _
+        "but not all the styles could be changed:" & vbCr & vbCr
+
+    ReadStyleChanges ChangeStyles, ChangeStylesFolder, _
+                        ReplaceArray(), WithArray(), _
+                        Links(), ProcessReport, _
+                        n, NrLines
+    
+    If DoReplaced_Styles Then
+        Application.StatusBar = "Updating style names from the file " & ReplacedStyles & "."
+        ReadStyleChanges ReplacedStyles, InstallFolder, _
+                            ReplaceArray(), WithArray(), _
+                            Links(), ProcessReport, _
+                            n, NrLines
+    End If
+    
+    On Error GoTo -1: On Error GoTo 0
+    NrLines = n - 1
+    
+    For n = 1 To NrLines
+        For other = n + 1 To NrLines
+            If WithArray(n) = WithArray(other) Then
+                Links(n) = True
+                Links(other) = True
+            End If
+        Next other
+    Next n
+    
+    Selection.Find.ClearFormatting
+    With Selection.Find
+        .Text = ""
+        .Replacement.Text = ""
+        .Forward = True
+        .Wrap = wdFindContinue
+        .Format = False
+        .MatchCase = False
+        .MatchWholeWord = False
+        .MatchWildcards = False
+        .MatchSoundsLike = False
+        .MatchAllWordForms = False
+    End With
+    
+    For n = 1 To NrLines
+        ' DoEvents
+        Part = n \ 10 + 1
+        Whole = NrLines \ 10 + 1
+        WordBasic.PrintStatusBar _
+            String(Part, Chr(135)) + String(Whole - Part, Chr(134)) + _
+            " Renaming " + _
+            ReplaceArray(n) + " -- as -- " + _
+            WithArray(n)
+        StyleNames_RenameText ReplaceArray(n), WithArray(n), _
+            Links(n), HasFootnotes, HasEndnotes
+    Next n
+    
+    Application.StatusBar = "Style names updated."
+    On Error GoTo 0
+    GoTo Finished
+
+Finished:
+    ' reclaim some memory space.
+    '
+    ReDim ReplaceArray(1)
+    ReDim WithArray(1)
+    ReDim Links(1)
+End Sub
+Sub StyleNames_RenameText( _
+    OldName As String, NewName As String, _
+    Links As Boolean, HasFootnotes As Boolean, HasEndnotes As Boolean)
+    ' If Links is false,
+    '   and we are not changing a character style to a paragraph style,
+    '   and neither style is a BuiltIn
+    '   and new style not in use already,
+    '       rename the OldName style with the NewName
+    ' else
+    '   find all text in the style OldName and apply the style of the new name to it,
+    '       making special provision if changing a char style to a para style.
+    '
+    Dim Found As Boolean
+    Dim FoundInMain As Boolean
+    Dim FoundInFootnotes As Boolean
+    Dim FoundInEndnotes As Boolean
+    Dim CharToParagraph As Boolean
+    Dim rFound As Range
+    Dim s As Style
+    Dim HasComma As Boolean
+    
+    On Error GoTo -1: On Error GoTo StyleMissing
+    
+    CharToParagraph = _
+        ActiveDocument.Styles(OldName).Type = wdStyleTypeCharacter _
+        And ActiveDocument.Styles(NewName).Type = wdStyleTypeParagraph
+
+    ' Look in main story +/- footnotes +/- endnotes
+    '
+    StyleNames_SearchStory wdMainTextStory, _
+        Found, FoundInMain, _
+        NewName
+    
+    If HasFootnotes Then
+        StyleNames_SearchStory wdFootnotesStory, _
+            Found, FoundInFootnotes, _
+            NewName
+    End If
+    
+    If HasEndnotes Then
+        StyleNames_SearchStory wdEndnotesStory, _
+            Found, FoundInEndnotes, _
+            NewName
+    End If
+    
+    If CharToParagraph _
+    Or Links _
+    Or ActiveDocument.Styles(OldName).BuiltIn _
+    Or ActiveDocument.Styles(NewName).BuiltIn _
+    Or Found Then
+        ' we can't rename the old style with the new name,
+        ' so we'll have to search for text in the style and apply the new style.
+        '
+        StatusBar = "Searching for text in style '" & OldName & _
+            "' & applying the style '" & NewName & "'"
+        Selection.Find.Style = ActiveDocument.Styles(OldName)
+
+        Stylenames_RenameTextLoop wdMainTextStory, CharToParagraph, OldName, NewName
+        
+        ' Now do the footnotes.
+        '
+        If HasFootnotes Then
+            Stylenames_RenameTextLoop wdFootnotesStory, CharToParagraph, OldName, NewName
+        End If
+        
+        ' and endnotes
+        '
+        If HasEndnotes > 0 Then
+            Stylenames_RenameTextLoop wdEndnotesStory, CharToParagraph, OldName, NewName
+        End If
+        
+        ' Remove the old stylename so no risk of Like "c*" matching.
+        '
+        If ActiveDocument.Styles(OldName).BuiltIn = False Then
+            ActiveDocument.Styles(OldName).Delete
+        End If
+    Else
+        Set s = ActiveDocument.Styles(OldName)
+        On Error GoTo -1: On Error GoTo RenameError
+        ActiveDocument.Styles(NewName).Delete
+        s.NameLocal = NewName
+        ' DeleteStyle = False
+        Exit Sub
+RenameError:
+        MsgBox "Changing style" & vbCr & vbTab & OldName & vbCr & _
+                "to" & vbCr & vbTab & NewName & vbCr & Err.Description
+        On Error GoTo 0
+        Exit Sub
+    End If
+    
+    StatusBar = ""
+    On Error GoTo 0
+    Exit Sub
+StyleMissing:
+    On Error GoTo -1: On Error GoTo 0
+End Sub
+Sub Stylenames_RenameTextLoop( _
+        Story As Integer, _
+        CharToParagraph As Boolean, _
+        OldName As String, NewName As String)
+    Dim Found As Boolean
+    Dim rFound As Range
+    
+    ActiveDocument.StoryRanges(Story).Select
+    Selection.HomeKey Unit:=wdStory
+    
+    Do
+        Found = False   'Cludge to handle bug with multiple searches
+        Found = Selection.Find.Execute
+    
+        If Found Then
+            If CharToParagraph Then
+                ' We need to change a character style
+                ' to a paragraph style.
+                '
+                Set rFound = Selection.Range.Duplicate
+                Selection.Font.Reset    ' remove the character style
+                rFound.InsertAfter vbCr
+                
+                ' If the selection is not at the start of a paragraph,
+                '   put a paragraph mark before it.
+                '
+                Selection.Collapse
+                
+                Do While Selection.Start > 0
+                    Selection.Start = Selection.Start - 1
+                    If Selection.Range.Text = vbCr Then
+                        Exit Do
+                    Else
+                        Selection.Start = Selection.End
+                        Selection.TypeParagraph
+                        rFound.Start = Selection.Start
+                        Exit Do
+                    End If
+                Loop
+                
+                rFound.Select
+            End If
+            
+            If ActiveDocument.Styles(NewName).Type = wdStyleTypeParagraph Then
+                Selection.Paragraphs(1).Style = ActiveDocument.Styles(NewName)
+            Else
+                Selection.Style = ActiveDocument.Styles(NewName)
+            End If
+
+            Selection.MoveLeft Unit:=wdCharacter, Count:=2
+        End If
+    Loop While Found
+End Sub
+Sub StyleNames_SearchStory(Story As Integer, _
+    ByRef Found As Boolean, ByRef FoundInRange As Boolean, _
+    StyleName As String)
+    ' Search a StoryRange for text in a style.
+    '
+    ActiveDocument.StoryRanges(Story).Select
+    Selection.HomeKey Unit:=wdStory
+    Selection.Find.Style = ActiveDocument.Styles(StyleName)
+    FoundInRange = Selection.Find.Execute
+
+    If FoundInRange Then Found = True
+End Sub
+Sub ProcessAdaptItInterlinear()
+'
+' Macro recorded 10/23/2006 by Jim Henderson
+'
+    Dim ThisTable As Table
+    Dim DeleteRow5 As Integer
+    
+    DeleteRow5 = 0
+    
+    ' Add "keep with next" to the gloss lines
+    '
+    With ActiveDocument.Styles("Gloss Language")
+        .AutomaticallyUpdate = False
+    End With
+    
+    With ActiveDocument.Styles("Gloss Language").ParagraphFormat
+        .KeepWithNext = True
+    End With
+        
+    ' Make all the tables autofit to contents.
+    '
+    For Each ThisTable In ActiveDocument.Tables
+        ThisTable.AutoFormat Format:=wdTableFormatNone, AutoFit:=True
+        
+AskAgain:
+        If ThisTable.Rows.Count = 5 Then
+            If DeleteRow5 = 0 Then
+                DeleteRow5 = MsgBox("Do you want to delete the free translation row from every table?", vbYesNoCancel, "To delete rows or not . . .")
+                GoTo AskAgain
+            ElseIf DeleteRow5 = vbYes Then
+                ThisTable.Rows(5).Delete
+            End If
+        End If
+    Next
+End Sub
+Sub RemoveCommasFromStylenames()
+    Dim s As Style
+    Dim StyleName As String
+    Dim LeftPart As String
+    Dim RightPart As String
+    Dim Position As Long
+    
+    For Each s In ActiveDocument.Styles
+        StyleName = s.NameLocal
+        
+        If StyleName Like "*,*" Then
+            While StyleName Like "*,*"
+                Position = InStr(StyleName, ",")
+                
+                If Position > 0 Then
+                    LeftPart = Trim(Left(StyleName, Position - 1))
+                    RightPart = Trim(Right(StyleName, Len(StyleName) - Position))
+                    
+                    ' Where there is a comma in the stylename,
+                    '   Word sometimes adds a digit at the end of the section.
+                    '   Our styles that have digits at the end always have space before,
+                    '   so that can be used to guess when this silly thing has happened.
+                    '
+                    If LeftPart Like "*[! ]#" Then
+                        LeftPart = Left(LeftPart, Len(LeftPart) - 1)
+                    End If
+
+                    If RightPart Like "*[! ]#" Then
+                        RightPart = Left(RightPart, Len(RightPart) - 1)
+                    End If
+
+                    StyleName = LeftPart & " - " & RightPart
+                End If
+            Wend
+                    
+            s.NameLocal = StyleName
+        End If
+    Next s
+End Sub
+Function VariableGet(Name As String) As String
+    '
+    ' If the variable exists in the current document,
+    '   return its value
+    ' else, return null
+    '
+    Dim v As Variable
+    Dim bExists As Boolean
+    
+    bExists = False
+    
+    For Each v In ActiveDocument.Variables
+        If v.Name = Name Then
+            bExists = True
+            Exit For
+        End If
+    Next v
+    
+    If bExists Then
+        VariableGet = ActiveDocument.Variables(Name)
+    Else
+         VariableGet = ""
+    End If
+
+End Function
+Function VariableSet(Name As String, Value As Variant) As Boolean
+    '
+    ' If the variable exists in the current document,
+    '   sets its value to Value
+    ' else, creates it and sets its Value
+    '
+    Dim v As Variable
+    Dim bExists As Boolean
+    
+    bExists = False
+    
+    For Each v In ActiveDocument.Variables
+        If v.Name = Name Then
+            bExists = True
+            Exit For
+        End If
+    Next v
+    
+    If bExists Then
+        ActiveDocument.Variables(Name) = Value
+    Else
+        ActiveDocument.Variables.Add Name, Value
+    End If
+    
+End Function
+
