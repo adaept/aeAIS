@@ -1,0 +1,156 @@
+Attribute VB_Name = "ChangeFont"
+' First module in alphabetical order in Silas.dot
+' See globals in Gen module for whole project settings.
+'
+' Change Font macro
+' formerly ApplyNewFontToAllStyle
+'Allows you to change the font for the styles that display vernacular text.
+
+'   Written by Russ Terjung on 27 Jan 96
+'   Revised by Russ Terjung on 27 Mar 96
+'   Revised by Bryan Wussow on 27 May 96
+'       to apply the new Font to only 2 base styles, those which control only vernacular text: _Vernacular_Base & _Vernacular_word(s).
+'Note: BT Base, Note Base, and Normal are for text in the major language, and should not receive the vernacular font.
+'   Revised by Bryan Wussow on 4 Nov 96
+'       to remove prompt for and chg to template
+'   Revised by Josh Kelley on 10 Jun 97
+'       replaced "Stop - 1" commands with calls to Lib1.EndMacro
+'
+' Adapted for Silas by Kim Blewett and Jim Henderson, 2005-2007
+' THE NEED FOR THIS MACRO: comes from a situation where a document has been
+' exported from Paratext, Translation Editor or Adapt It as an RTF file,
+' and Silas.dot is attached.
+' This macro is used to change the font of the base style for vernacular text.
+
+Option Explicit
+Public Sub MAIN()
+Attribute MAIN.VB_Description = "Allows you to change the font for the styles that display vernacular text."
+Attribute MAIN.VB_ProcData.VB_Invoke_Func = "TemplateProject.ChangeFont.MAIN"
+Dim sTitle$
+Dim iFontCnt
+Dim count_
+Dim buttonchoice
+Dim i
+Dim CurrentStyle$
+Dim sVersion$
+Dim sFontName$
+sFontName$ = "unknown"
+sVersion$ = "ver 2.01"  'Nov96
+sTitle$ = "Change Font  " + sVersion$   'Title for Dialog boxes
+
+ZoomSet
+ActiveWindow.ActivePane.View.Type = wdNormalView
+
+'Note about temporary vs. permanent font change
+If MsgBox("Warning: This job will change the font in this current " & _
+        "document only; " & vbCrLf & _
+        "it will not change the font for this language project in the future. " & vbCrLf & vbCrLf & _
+        "If you want to change the font permanently for this language project, " & _
+        "choose 'Cancel' here. " & vbCrLf & _
+        "Then open the menu 'ScrLanguages' " & _
+        "and do the job called " & vbCrLf & _
+        Chr(34) & "Change Settings For A Language Project." & _
+        Chr(34) & vbCrLf & _
+        "Choose your language and make the font change there." & vbCr & _
+        "(You will then be able to change the font for Headings as well," & vbCr & _
+        "by using the Advanced button.)", _
+        vbExclamation + vbOKCancel, "Temporary Font Change") = vbCancel Then _
+    Exit Sub
+    
+ReDim sListOfStyles__$(2): Dim iCountOfListOfStyles
+sListOfStyles__$(0) = "_Vernacular_Base" 'base paragraph style
+' sListOfStyles__$(1) = "_Vernacular_word(s)"  'char style
+' iCountOfListOfStyles = 2
+iCountOfListOfStyles = 1
+
+On Error Resume Next
+Dim sMsg$, nl$              ' string buffer for Message Box text.
+nl$ = Chr(10)               ' new line, 'hard return' for WinWord
+
+'   DIALOG WITH THE USER ABOUT WHAT FONT NAME TO APPLY TO ALL STYLES:
+Dim fontDlg As Object
+iFontCnt = WordBasic.CountFonts() - 1
+WordBasic.PrintStatusBar "The count of fonts is ", iFontCnt
+ReDim FontArray__$(iFontCnt)
+For count_ = 0 To iFontCnt              ' Load the Font array for the Combo Box
+    FontArray__$(count_) = WordBasic.[Font$](count_ + 1)
+Next
+WordBasic.SortArray FontArray__$()
+WordBasic.BeginDialog 386, 260, sTitle$
+    WordBasic.ComboBox 9, 45, 252, 200, FontArray__$(), "ComboBox1"
+    WordBasic.OKbutton 285, 13, 88, 21
+    WordBasic.CancelButton 285, 47, 88, 21
+    WordBasic.Text 8, 8, 201, 13, "Select a font for the styles", "Text1"
+    WordBasic.Text 8, 24, 217, 13, " that display vernacular text:", "Text2"
+WordBasic.EndDialog
+Set fontDlg = WordBasic.CurValues.UserDialog
+Dim dlg As Object: Set dlg = WordBasic.CurValues.UserDialog
+
+'Get the current name of the vernacular font
+Dim FDSFrecord As Object: Set FDSFrecord = WordBasic.DialogRecord.FormatDefineStyleFont(False)
+WordBasic.FormatStyle Name:=sListOfStyles__$(0), Define:=1
+WordBasic.CurValues.FormatDefineStyleFont FDSFrecord
+
+PresentDialog:
+dlg.ComboBox1 = FDSFrecord.Font
+buttonchoice = WordBasic.Dialog.UserDialog(dlg)
+ 
+If buttonchoice <> -1 Then          ' User depressed 'Cancel' button
+    WordBasic.Call "Lib1.EndMacro"
+End If
+
+
+'   User pressed 'OK' button; we need to confirm the validity of the Combo-text box entry,
+'   since the user is allowed to type the Font name in a ComboBox control.
+
+sFontName$ = dlg.ComboBox1
+For count_ = 0 To iFontCnt
+    If FontArray__$(count_) = sFontName$ Then GoTo FontValid
+Next
+
+sMsg$ = "The " + sFontName$ + " font is unknown or not installed on this system."
+WordBasic.MsgBox sMsg$, sTitle$, 48
+GoTo PresentDialog
+
+
+'   THE FONT NAME IS IN THE WINDOWS LIST AND CONSIDERED VALID:
+FontValid:
+Err.Number = 0
+On Error Resume Next
+For i = 0 To iCountOfListOfStyles - 1
+    CurrentStyle$ = sListOfStyles__$(i)
+    WordBasic.PrintStatusBar "Redefining the font for style: " + CurrentStyle$
+    WordBasic.FormatStyle Name:=CurrentStyle$, Define:=1
+    WordBasic.FormatDefineStyleFont Font:=sFontName$
+    
+    ' if Word 2000 or later, set complex font name also
+    If Val(Application.Version) >= Wd2000 Then
+        SetBiDirectionalFont CurrentStyle$, sFontName$
+    End If
+Next i
+
+EndOfJob:
+ChangeLineSpacingPoints.SetSpacing
+
+If iCountOfListOfStyles > 1 Then
+    sMsg$ = "The following base styles now use the " + sFontName$ + " font:"
+    For i = 0 To iCountOfListOfStyles - 1
+        sMsg$ = sMsg$ + nl$ + "     " + sListOfStyles__$(i)
+    Next
+Else
+    sMsg$ = "The base style " + Chr(34) + sListOfStyles__$(0) + Chr(34) + _
+            " now uses the " + Chr(34) + sFontName$ + Chr(34) + " font."
+End If
+
+WordBasic.MsgBox sMsg$, sTitle$, 64
+SetDropCapSize
+FootnoteParaHangSet ForceStyleSetting:=False      ' Reset hanging indents on footnotes to match new font.
+
+ExitJob:
+
+If Not FormattingInProgress Then
+    OptionalLineBreaks
+End If
+
+SetDefaultView
+End Sub

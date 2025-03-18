@@ -1,0 +1,42 @@
+Attribute VB_Name = "ReformatVerseNumbers"
+
+' ReformatVerseNumbers macro
+' Reformats existing numbers in the current selection (or in the whole document) as verse numbers.
+' B Wussow JAARS ICTS, PNG Jan96
+'   Revised by Josh Kelley on 10 Jun 97
+'       replaced "Stop - 1" commands with calls to Lib1.EndMacro
+
+' If there is a current selection, verse numbers within it will be reformatted.
+' If no current selection, verse numbers within the whole document will be reformatted.
+
+Option Explicit
+Public Sub MAIN()
+Attribute MAIN.VB_Description = "Reformats existing numbers in the current selection (or in the whole document) as verse numbers.\r\n"
+Attribute MAIN.VB_ProcData.VB_Invoke_Func = "TemplateProject.ReformatVerseNumbers.MAIN"
+Dim CR$
+Dim nMode
+Dim button
+
+CR$ = Chr(13)
+ZoomSet
+ActiveWindow.ActivePane.View.Type = wdNormalView
+
+' Is there a selection?  Set operating mode.
+If WordBasic.SelType() = 2 Then
+    nMode = 2           'reformat within selection
+Else
+    nMode = 1           'reformat through whole doc
+End If
+
+'Display initial information if processing whole doc
+If nMode = 1 Then
+    button = WordBasic.MsgBox("All numbers in the document will be formatted as verse numbers, except those with a 'Chapter' or 'Reference' style applied." + CR$ + "Are you sure all your chapter numbers and reference lines have the proper paragraph style applied?  Click OK to continue.", "Reformat Existing Numbers", 33)
+    If button = 0 Then WordBasic.Call "Lib1.EndMacro"       'cancelled
+End If
+
+' Do all processing in other module
+WordBasic.Call "InsertVerseNumber.VerseNumProcessing", nMode
+
+SetDefaultView
+SetStandardFindOptions
+End Sub

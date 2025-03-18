@@ -1,0 +1,161 @@
+Attribute VB_Name = "SingleOrDoubleColumn"
+Private Const CVStylesCount As Integer = 10
+Dim CVStyles(CVStylesCount) As String
+
+Option Explicit
+Public Sub MAIN()
+Dim nCol$
+Dim RM$
+Dim Found As Boolean
+Dim StyleName As String
+' SingleOrDoubleColumn Macro
+' Toggles single column to double column or vice versa.
+'     Works on all text sections of the document.
+' B Wussow PNG Sept95
+' made multi-section by Jim Henderson, Nov 2005
+' If document variable "NrColumns" is 2,
+'   change every section to single column and set "NrColumns" to 1,
+' else
+'   change every non-intro section to double column and set "NrColumns" to 2.
+'
+Dim FCrecord As Object
+Dim SectionNumber As Long
+Dim RemakeFrontMatter As Boolean
+Dim MakingNrColumns As String
+
+Dim NrParas As Long
+Dim ParaNo As Long
+Dim ParaNotIntro As Boolean
+
+' DoubleColumn can mix up DefaultSettings if that's not done first
+   If VariableGet("DefaultSettings") <> "done" Then
+      MsgBox "Please run one of the formatting jobs before making two columns: " & _
+         vbCrLf & vbCrLf & vbTab & "1. Format for Proof printouts" & vbCrLf & _
+         "or " & vbTab & "2. Format for Half-Page Booklets", vbOKOnly
+      Exit Sub
+   End If
+   
+    ZoomSet
+    ActiveWindow.ActivePane.View.Type = wdNormalView
+
+    If VariableGet("NrColumns") = "2" Then
+        MakingNrColumns = "1"
+        
+        If VariableGet("FrontMatter") = "done" Then
+            RemakeFrontMatter = True
+            Gen.RemoveFrontMatter
+        End If
+    
+    Else
+        MakingNrColumns = "2"
+        Gen.AddSectionBreaks SeparateIntro:=True
+    End If
+    
+    ' Now for each section,
+    '   if we want single & it is double-column,
+    '       make it single
+    '   else if we want double and it is single
+    '        and contains non-intro material,
+    '           make it double.
+    '
+    StandardizeSections MakingNrColumns
+    VariableSet "NrColumns", MakingNrColumns
+    
+    If MakingNrColumns = "1" Then
+        Gen.RemoveSectionBreaks
+        Gen.AddSectionBreaks SeparateIntro:=False
+    End If
+    
+    SetDefaultView
+    If RemakeFrontMatter Then
+        Gen.MakeFrontPages
+    End If
+    SetStandardFindOptions
+    
+    If Not FormattingInProgress Then
+        OptionalLineBreaks
+    End If
+End Sub
+Sub StandardizeSections(MakingNrColumns As String)
+    ' For each section,
+    '   if we want single & it is double-column,
+    '       make it single
+    '   else if we want double
+    '       if it contains intro material
+    '           make it single
+    '       else make sure it is double.
+    '
+    Dim SectionNumber As Long
+    Dim nCol$
+    Dim NrParas As Long
+    Dim ParaNo As Long
+    Dim ParaNotIntro As Boolean
+    Dim StyleName As String
+    
+    For SectionNumber = 1 To ActiveDocument.Sections.Count
+        ActiveDocument.Sections(SectionNumber).Range.Select
+        nCol$ = Selection.Sections(1).PageSetup.TextColumns.Count
+            
+        Select Case MakingNrColumns
+        Case "1"
+            If nCol$ = "2" Then
+                With Selection.PageSetup.TextColumns
+                    .SetCount NumColumns:=1
+                End With
+            Else
+                GoTo TryNextSection
+            End If
+            
+        Case "2"
+            ' If this section contains text in a non-intro style,
+            '   if it is single column
+            '       change it to double-column.
+            ' else make sure it is single-column.
+            '
+            NrParas = Selection.Paragraphs.Count
+            ParaNotIntro = False
+            
+            For ParaNo = 1 To NrParas
+                StyleName = Selection.Paragraphs(ParaNo).Style
+                
+                ' If the section contains verse-type material
+                '   remember that in ParaNotIntro
+                '
+                If StyleName Like "c*" _
+                Or StyleName Like "p*" _
+                Or StyleName Like "q*" _
+                Or StyleName = "_GlossaryHeadWord" _
+                Or StyleName Like "m[i rs]*" _
+                Or StyleName Like "li*" Then
+                    ParaNotIntro = True
+                    Exit For
+                End If
+                
+                ' Or if it's definitely intro material,
+                '   there's no need to look any further in this section.
+                '
+                If StyleName Like "mt*" _
+                Or StyleName Like "i[mopqs]*" Then
+                    Exit For
+                End If
+            Next ParaNo
+            
+            If ParaNotIntro Then
+                With Selection.PageSetup.TextColumns
+                    .SetCount NumColumns:=2
+                    .EvenlySpaced = True
+                    .LineBetween = True
+                    .Spacing = CentimetersToPoints(0.6)
+                End With
+                GoTo TryNextSection
+            Else
+                With Selection.PageSetup.TextColumns
+                    .SetCount NumColumns:=1
+                End With
+            End If
+        End Select
+
+TryNextSection:
+    Next SectionNumber
+End Sub
+

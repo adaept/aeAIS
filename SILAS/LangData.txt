@@ -1,0 +1,1488 @@
+Attribute VB_Name = "LangData"
+Public NewLanguage As Boolean
+
+Dim vLanguageName As String      ' to control language-specific things
+Dim vLanguageProvince As String  ' for front matter
+Dim vLanguageCode As String
+Dim vLanguageProjectCode As String
+Dim vLanguageCountry As String
+Dim vLanguageFont As String
+Dim vLanguageHeadingFont As String
+Dim vLanguageLeading As String
+Dim vLanguageSize As String
+Dim vPTNoFontChange As String
+Dim vLanguageQuotesInProofPrintouts As String
+Dim vLanguageDropCapChapterNumbers As String
+Dim vLanguageHideNumberForEachVerse1 As String
+Dim vLanguageHeaderOutside As String
+Dim vLanguageHeaderOther As String
+Dim vLanguageRestartFootnoteRefs As String
+Dim vLanguageNoBreakHyphens As String
+Dim vLanguageNoBreakSpaces As String
+Dim vLanguageBrackets2HalfBrackets As String
+Dim vLanguageBoldVerseNumbers As String
+Dim vLanguage As String
+Dim Msg As String, Style As Long, Title As String, Result As Integer
+Dim Response As String
+
+Option Explicit
+Option Compare Text     ' so language names will match better
+Private Sub AddIDLine()
+   dbAskForHeaderAndTitle.Show
+   
+   Selection.HomeKey Unit:=wdStory
+   Selection.TypeParagraph
+   Selection.MoveUp Unit:=wdLine, Extend:=wdExtend
+   Selection.Font.Reset     ' remove any character style such as \v
+   Selection.Style = ActiveDocument.Styles("id - File - Identification")
+   Selection.TypeText Text:=VariableGet("idBookCode") & " - " & VariableGet("LanguageName") _
+      & " " & VariableGet("idVersionInfo")
+   
+End Sub
+Private Sub AskForHeaderAndTitle()
+' Header variable is set in AddIDLine.
+' This is called from LoadLanguageData, after PT styles are found but no language
+'   is assigned (=no ID line with language identifiers)
+
+' Check for Header code taken from MakeHeaders
+    ' Look for text in the style "h - File - Header"
+    ' and others like it, also for Main Title
+    '
+    Dim FoundHeader As Boolean
+    Dim FoundTitle As Boolean
+    Dim IDFound As Boolean
+    Dim i As Integer
+    Dim StyleName As String
+    Dim BookNameStyle As String
+    Dim VerseStyleFound As Boolean
+
+    Dim HeadingStyles(4) As String
+    Dim HeadingFound(4) As Boolean
+    Dim TitleStyles(5) As String
+    Dim TitleFound(5) As Boolean
+    
+    Dim rng As Range
+    
+    HeadingStyles(1) = "h1 - File - Header"
+    HeadingStyles(2) = "h2 - File - Left Header"
+    HeadingStyles(3) = "h3 - File - Right Header"
+    HeadingStyles(4) = "h - File - Header"
+    TitleStyles(1) = "mt1 - Title - Major Title Level 1"
+    TitleStyles(2) = "mt2 - Title - Major Title Level 2"
+    TitleStyles(3) = "mt3 - Title - Major Title Level 3"
+    TitleStyles(4) = "mt4 - Title - Major Title Level 4"
+    TitleStyles(5) = "mt - Title - Major Title Level 1"
+    
+    WordBasic.ToolsOptionsView Hidden:=1, ShowAll:=0, FieldCodes:=0
+    FoundHeader = False
+    FoundTitle = False
+    SetStandardFindOptions
+    Selection.Find.ClearFormatting
+    BookNameStyle = ""
+    VerseStyleFound = False
+    
+    ' first test for Scripture by searching for Verse styles. If not
+    ' found then exit sub
+    With Selection.Find
+        .Text = ""
+        .Replacement.Text = ""
+        .Forward = True
+        .Wrap = wdFindContinue
+        .Format = True
+        .MatchWildcards = False
+    End With
+    
+    Selection.Find.Style = ActiveDocument.Styles(StdVerseStyle)
+    VerseStyleFound = Selection.Find.Execute
+    If Not VerseStyleFound Then
+        Selection.Find.Style = ActiveDocument.Styles("va...va* - Verse Number - Alternate")
+        VerseStyleFound = Selection.Find.Execute
+        If Not VerseStyleFound Then
+            Selection.Find.Style = ActiveDocument.Styles("vp...vp* - Verse Number - Publishing Alternate")
+            VerseStyleFound = Selection.Find.Execute
+            If Not VerseStyleFound Then Exit Sub
+        End If
+    End If
+            
+'now search for headers and titles
+    With Selection.Find
+        .Text = ""
+        .Replacement.Text = ""
+        .Forward = True
+        .Wrap = wdFindContinue
+        .Format = True
+    End With
+    
+    For i = 1 To 4     'loop for Header styles
+        Selection.HomeKey Unit:=wdStory
+        If i < 5 Then
+            Selection.Find.Style = ActiveDocument.Styles(HeadingStyles(i))
+        
+            HeadingFound(i) = Selection.Find.Execute
+    
+            If HeadingFound(i) Then
+                FoundHeader = True
+            End If
+        End If
+    Next i
+    
+    For i = 1 To 5     'loop for Title styles
+        Selection.HomeKey Unit:=wdStory
+        If i < 6 Then
+            Selection.Find.Style = ActiveDocument.Styles(TitleStyles(i))
+        
+            TitleFound(i) = Selection.Find.Execute
+    
+            If TitleFound(i) Then
+                FoundTitle = True
+            End If
+        End If
+    Next i
+    
+    Selection.HomeKey Unit:=wdStory   'go to top of file in case we exit next
+    If Not FoundHeader Then   'ask for book name
+       If VariableGet("idBookName") = "" Then
+          Msg = "Type the short name (in the language) of the " & _
+                "Bible book that this text is from. This will be used " & _
+                "for the header at the top of each page. You may " & _
+                "leave it blank if you wish." & vbCrLf & vbCrLf & _
+                "Examples: " & vbCrLf & "     Mateo" & vbCrLf & _
+                "     Apoosol" & vbCrLf & "     1 Timotii"
+          Title = "Add Book Name"
+          Response = InputBox(Msg, Title)
+          If Response = "" Or Response = " " Then Exit Sub
+          VariableSet ("idBookName"), Response
+       End If
+   
+        'Now add Header and Title text
+        Do While Selection.Style Like "id*"
+            ' With Selection
+            '     .MoveStartUntil cset:=vbCrLf
+            '     .MoveDown Unit:=wdLine, Count:=1, Extend:=wdMove
+            ' End With
+            Selection.MoveDown Unit:=wdParagraph, Count:=1
+        Loop
+        
+        Selection.TypeParagraph
+        Selection.MoveUp Unit:=wdLine, Extend:=wdExtend
+        Selection.Font.Reset     ' remove any character style such as \v
+        Selection.Style = ActiveDocument.Styles("h - File - Header")
+'        Selection.TypeText Text:=Result
+        Selection.TypeText Text:=VariableGet("idBookName")
+        If Not FoundTitle Then     'add mt title
+'                Selection.HomeKey unit:=wdLine
+            Selection.TypeParagraph
+'                Selection.MoveUp unit:=wdLine, Count:=1, Extend:=wdMove
+            Selection.Style = ActiveDocument.Styles("mt - Title - Major Title Level 1")
+            Selection.TypeText Text:=VariableGet("idBookName")
+        End If
+    End If
+
+End Sub
+Sub AddNewLanguageToIni()
+
+Dim sTemp As String
+Dim sPTFont As String
+Dim sLanguageFont As String
+
+Dim LanguageNumber As String
+Dim Number As Integer
+
+Dim TextCode As String
+Dim TextProjectCode As String
+Dim TextLanguageName As String
+Dim CodeMatch As Boolean
+Dim FoundOrNot As String
+
+Dim LanguageName As String
+Dim LanguageCode As String
+Dim LanguageProjectCode As String
+Dim LanguageProvince As String
+Dim LanguageCountry As String
+Dim LanguageFont As String
+Dim LanguageSize As String
+'Dim PTNoFontChange As String
+Dim LanguageQuotesInProofPrintouts As String
+Dim LanguageDropCapChapterNumbers As String
+Dim LanguageHideNumberForEachVerse1 As String
+Dim LanguageNameTemp As String
+Dim HeaderOutside As String
+Dim HeaderOther As String
+Dim RestartFootnoteRefs As String
+Dim NoBreakHyphens As String
+Dim NoBreakSpaces As String
+Dim Brackets2HalfBrackets As String
+Dim BoldVerseNumbers As String
+
+Dim FileSystem As Object
+
+    ZoomSet
+    ActiveWindow.ActivePane.View.Type = wdNormalView
+    
+    If IniFile = "" Then SetIniFile
+    Set FileSystem = CreateObject("Scripting.FileSystemObject")
+    If FileSystem.FileExists(IniFile) Then
+        Number = 1  ' Start with record Language_1
+    Else:
+        Msg = "I can't find the file, " & LanguageFileName & ". " & _
+            "Would you like me to create it for you?" & vbCrLf & vbCrLf & _
+            "Click NO if you think " & _
+            "the file should be there and you would like to look for it manually." & _
+            vbCrLf & "Click YES if you're just starting to use this template, " & _
+            "or if you want to reset the language settings."
+        Style = vbYesNo
+        Title = "Languages.ini Not Found (AddNewLang)"
+        Result = MsgBox(Msg, Style, Title)
+        If Result = vbYes Then
+            CreateIniFile
+            Number = 1
+        Else
+            Exit Sub
+        End If
+    End If
+
+    ' Step through the language records to the last one.
+    ' Exits with Number set to the next number to use.
+    '
+    Do
+        LanguageNumber = "Language_" & Number
+        
+        LanguageNameTemp = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="Name")
+        
+        ' This is so we can tell when we have processed all the languages.
+        ' The result is that there can be no gap in the sequence of language numbers
+        ' in Languages.ini file.
+        '
+        If LanguageNameTemp = "" Then Exit Do
+        If LanguageNameTemp = " " Then Exit Do
+        
+        LanguageName = LanguageNameTemp
+        
+        Number = Number + 1
+    Loop While LanguageNameTemp <> ""
+                
+    ' LanguageName = VariableGet("LanguageName")
+    LanguageName = VariableGet("tmpLang")
+    LanguageNumber = "Language_" & Number
+    NewLanguage = True
+    
+    With dbLanguageInfo
+        .txtLanguageNameIni.Text = LanguageName
+        sTemp = VariableGet("LanguageCode")
+        If sTemp <> "" Then _
+                .txtLangCodeIni.Text = sTemp
+
+        If TextCode <> "" Then .txtLangCodeIni.Text = TextCode
+        
+        sPTFont = VariableGet("PTFont")
+        sLanguageFont = VariableGet("LanguageFont")
+        
+        If sPTFont <> "" Then
+            .cmboFontArray.Text = sPTFont
+        ElseIf sLanguageFont <> "" Then
+            .cmboFontArray.Text = sLanguageFont
+        Else: .cmboFontArray.Text = ActiveDocument.Styles("_Vernacular_Base").Font.Name
+        End If
+        
+        sTemp = VariableGet("LanguageSize")
+        If sTemp <> "" Then
+            .txtFontSizeIni.Text = sTemp
+        Else: .txtFontSizeIni = "11"
+        End If
+        
+        sTemp = VariableGet("ProjectCode")
+        If sTemp <> "" Then .txtProjectCodeIni.Text = sTemp
+        
+        If TextProjectCode <> "" Then _
+            .txtProjectCodeIni.Text = TextProjectCode
+
+        .txtProvinceIni.Text = VariableGet("LanguageProvince")
+        .txtCountryIni.Text = VariableGet("LanguageCountry")
+        .txtIniNumber.Text = LanguageNumber
+        
+        .Show
+    End With
+        
+    If VariableGet("NoLanguageSet") <> "True" Then
+        DoFontChangesFromIni
+    End If
+    
+    SetDefaultView
+End Sub
+Sub CreateIniFile()
+' use writestream to create "Languages.ini" in the Paratext settings folder if it's missing,
+' in "c:\my paratext projects\" or wherever the Paratext settings folder is on this computer.
+' No languages entered yet
+' First check to see if Languages.ini exists in the Paratext settings folder
+'
+Dim FileSystem As Object
+Dim a As Object
+
+    If IniFile = "" Then SetIniFile
+    ActiveWindow.ActivePane.View.Type = wdNormalView
+   
+    Set FileSystem = CreateObject("Scripting.FileSystemObject")
+    If Not FileSystem.FileExists(IniFile) Then
+        
+        Set a = FileSystem.CreateTextFile(IniFile, True)
+        a.Writeline ("; Configuration file for multiple languages being printed from a single computer.")
+        a.Writeline ("; This file must be in the Paratext settings folder,")
+        a.Writeline ("; which is usually 'C:\My Paratext Projects'")
+        a.Writeline (";")
+        a.Writeline ("; Be careful not to have any gaps in the series of language numbers, such as")
+        a.Writeline (";   [Language_1]")
+        a.Writeline (";   [Language_3]")
+        a.Writeline ("; because the process of checking languages will stop as soon as language_2 is missing.")
+        a.Writeline ("")
+        a.Writeline ("[TemplateVersionNumber]")
+        a.Writeline ("SVersion= ")
+        a.Writeline ("Build= ")
+        a.Writeline ("; These are updated by CopyAttachSILASTemplateModuleA, checked by Install procedure.")
+        a.Writeline ("")
+        a.Writeline ("[IniSetupDate]")
+        a.Writeline ("Date= ")
+        a.Writeline ("; This is for future ref, to do a check for old Lang.ini that may not have all elements.")
+        a.Writeline ("")
+        a.Writeline ("[DefaultPaperSize]")
+        a.Writeline ("; This is set by macro SetDefaultPaperSize.")
+        a.Writeline ("")
+        a.Writeline ("[Messages]")
+        a.Writeline ("")
+        a.Writeline ("[LastBookletSettings]")
+        a.Writeline ("")
+        a.Writeline ("[Language_1]")
+        a.Writeline ("Name=")
+        a.Writeline ("Code=")
+        a.Writeline ("ProjectCode=")
+        a.Writeline ("Province=")
+        a.Writeline ("Country=")
+        a.Writeline ("Font=Times New Roman")
+        a.Writeline ("FontLeading=normal")
+        a.Writeline ("HeadingFont=")
+        a.Writeline ("DefaultSizeInPoints=12")
+        a.Writeline ("PTNoFontChange=False")
+        a.Writeline ("QuotesInProofPrintouts=yes")
+        a.Writeline ("DropCapChapterNumbers=no")
+        a.Writeline ("HideNumberForEachVerse1=no")
+        a.Writeline ("HeaderOutside=PageNumber")
+        a.Writeline ("HeaderOther=inner")
+        a.Writeline ("")
+        a.Close
+    End If
+End Sub
+Sub ShowLanguageInfoForm(Optional PTFont As String)
+' dbLanguageInfo assigns document variables with OK_Click.
+' Dim FileSystem As Object
+
+ZoomSet
+ActiveWindow.ActivePane.View.Type = wdNormalView
+
+NewLanguage = False
+
+If VariableGet("QuotesInProofPrintouts") = "yes" Then
+    dbLanguageInfo.optQuotesYes = True
+    dbLanguageInfo.optQuotesNo = False
+ElseIf VariableGet("QuotesInProofPrintouts") = "no" Then
+    dbLanguageInfo.optQuotesYes = False
+    dbLanguageInfo.optQuotesNo = True
+End If
+
+If VariableGet("DropCapChapterNumbers") = "yes" Then
+    dbLanguageInfo.optDropCapsYes = True
+    dbLanguageInfo.optDropCapsNo = False
+    If VariableGet("HideNumberForEachVerse1") = "yes" Then
+        dbLanguageInfo.cbHideVerse1 = True
+    Else
+        dbLanguageInfo.cbHideVerse1 = False
+    End If
+    dbLanguageInfo.cbHideVerse1.Enabled = True
+ElseIf VariableGet("DropCapChapterNumbers") = "no" Then
+    dbLanguageInfo.optDropCapsYes = False
+    dbLanguageInfo.optDropCapsNo = True
+    dbLanguageInfo.cbHideVerse1.Enabled = False
+End If
+
+If VariableGet("HeaderOutside") = "BookChapter" Then
+    dbLanguageInfo.optBookOutside = True
+    dbLanguageInfo.optPageOutside = False
+ElseIf VariableGet("HeaderOutside") = "PageOutside" Then
+    dbLanguageInfo.optBookOutside = False
+    dbLanguageInfo.optPageOutside = True
+End If
+
+If VariableGet("HeaderOther") = "inner" Then
+    dbLanguageInfo.optInsideHdr = True
+    dbLanguageInfo.optCenterHdr = False
+ElseIf VariableGet("HeaderOther") = "center" Then
+    dbLanguageInfo.optInsideHdr = False
+    dbLanguageInfo.optCenterHdr = True
+End If
+
+If VariableGet("RestartFootnoteRefs") <> "no" Then
+    dbLanguageInfo.cbRestartFootnoteRefs = True
+Else
+    dbLanguageInfo.cbRestartFootnoteRefs = False
+End If
+
+If VariableGet("NoBreakHyphens") = "yes" Then
+    dbLanguageInfo.cbNoBreakHyphens = True
+Else
+    dbLanguageInfo.cbNoBreakHyphens = False
+End If
+
+If VariableGet("NoBreakSpaces") = "yes" Then
+    dbLanguageInfo.cbNoBreakSpaces = True
+Else
+    dbLanguageInfo.cbNoBreakSpaces = False
+End If
+
+If VariableGet("Brackets2HalfBrackets") = "yes" Then
+    dbLanguageInfo.cbBrackets2HalfBrackets = True
+Else
+    dbLanguageInfo.cbBrackets2HalfBrackets = False
+End If
+
+If VariableGet("BoldVerseNumbers") = "yes" Then
+    dbLanguageInfo.cbBoldVerseNumbers = True
+Else
+    dbLanguageInfo.cbBoldVerseNumbers = False
+End If
+
+'If VariableGet("Leading") = "extratall" Then   'moved this to dbAdvanced..._Initialize
+
+With dbLanguageInfo
+    .txtLangCodeIni.Text = VariableGet("LanguageCode")
+    .txtLanguageNameIni.Text = VariableGet("LanguageName")
+    .txtProvinceIni.Text = VariableGet("LanguageProvince")
+    .txtCountryIni.Text = VariableGet("LanguageCountry")
+    If PTFont <> "" Then
+        .cmboFontArray.Text = PTFont
+    Else: .cmboFontArray.Text = VariableGet("LanguageFont")
+    End If
+    .txtFontSizeIni.Text = VariableGet("LanguageSize")
+    .txtIniNumber.Text = VariableGet("LanguageNumber")
+    .txtProjectCodeIni.Text = VariableGet("ProjectCode")
+    .Show
+End With
+    
+' If Val(Application.Version) >= Wd2007 Then
+'     Wd2007Convert
+' End If
+
+SetDefaultView
+End Sub
+Sub SendLanguageData2IniFile()
+' assigns ActiveDoc.variables to Inifile, also sets font & size to new values
+Dim LanguageNumber As String
+Dim Number As Integer
+Dim FileSystem As Object
+    
+    ActiveWindow.ActivePane.View.Type = wdNormalView
+    If IniFile = "" Then SetIniFile
+    Set FileSystem = CreateObject("Scripting.FileSystemObject")
+
+' example from help file on ProfileString Property
+'
+'    System.PrivateProfileString( _
+'        FileName:="C:\My Documents\Macro.ini", _
+'        Section:="DocTracker", Key:="DocNum") = 1
+
+LanguageNumber = VariableGet("LanguageNumber")
+
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="Name") = VariableGet("LanguageName")
+    
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="Code") = VariableGet("LanguageCode")
+    
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="ProjectCode") = VariableGet("ProjectCode")
+    
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="Province") = VariableGet("LanguageProvince")
+    
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="Country") = VariableGet("LanguageCountry")
+    
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="Font") = VariableGet("LanguageFont")
+    
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="HeadingFont") = VariableGet("HeadingFont")
+    
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="FontLeading") = VariableGet("Leading")
+
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="DefaultSizeInPoints") = VariableGet("LanguageSize")
+
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="PTNoFontChange") = VariableGet("PTNoFontChange")
+    
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="QuotesInProofPrintouts") = VariableGet("QuotesInProofPrintouts")
+        
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="DropCapChapterNumbers") = VariableGet("DropCapChapterNumbers")
+
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="HideNumberForEachVerse1") = VariableGet("HideNumberForEachVerse1")
+
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="HeaderOutside") = VariableGet("HeaderOutside")
+
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="HeaderOther") = VariableGet("HeaderOther")
+
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="RestartFootnoteRefs") = VariableGet("RestartFootnoteRefs")
+    
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="NoBreakHyphens") = VariableGet("NoBreakHyphens")
+    
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="NoBreakSpaces") = VariableGet("NoBreakSpaces")
+    
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="Brackets2HalfBrackets") = VariableGet("Brackets2HalfBrackets")
+    
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="BoldVerseNumbers") = VariableGet("BoldVerseNumbers")
+    
+    System.PrivateProfileString( _
+        FileName:=IniFile, _
+        Section:=LanguageNumber, _
+        Key:="CheckingTable") = VariableGet("CheckingTable")
+        
+End Sub
+Sub ShowLanguagesList()
+' If no languages in IniFile, LoadLanguageData chokes on this userform, so make an If statement
+    Dim fs As Object
+    Dim tempName As String
+    
+    tempName = VariableGet("LanguageName")
+    If tempName = "" Or tempName = " " Then
+        If IniFile = "" Then SetIniFile
+        Set fs = CreateObject("Scripting.FileSystemObject")
+        tempName = System.PrivateProfileString(FileName:=IniFile, Section:="Language_1", Key:="Name")
+        
+    Else: GoTo NameAssigned
+    End If
+
+        
+NameAssigned:
+    If tempName <> "" And tempName <> " " Then
+        With dbLanguageListFromIni
+            .cmboIniLanguages.Text = tempName
+            .Show
+        End With
+    Else
+        AddNewLanguageToIni
+    End If
+End Sub
+Sub ShowLangInfoInIniFile()
+
+' get and list all the languages currently specified in Languages.ini.
+
+Dim LanguageNumber As String
+Dim Number As Integer
+
+Dim TextCode As String
+Dim CodeMatch As Boolean
+Dim FoundOrNot As String
+
+Dim FileSystem As Object
+
+Dim sHideNumberForEachVerse1 As String
+
+    If IniFile = "" Then SetIniFile
+    Set FileSystem = CreateObject("Scripting.FileSystemObject")
+    
+    If FileSystem.FileExists(IniFile) Then
+        Number = 1  ' Start with record Language_1
+    Else:
+        Msg = "I can't find the file, " & LanguageFileName & "." & _
+            "Would you like me to create it for you? Click No if you think " & _
+            "the file should be there and you would like to look for it manually." & _
+            vbCrLf & vbCrLf & "Click yes if you're just starting to use this template, " & _
+            "or you'd like to reset the languages."
+        Style = vbYesNo
+        Result = MsgBox(Msg, Style, Title)
+        Title = "Languages.Ini Not Found (ShowLangInfo)"
+        If Result = vbYes Then
+            CreateIniFile
+        Else
+            Exit Sub
+        End If
+    End If
+    
+        ' Get data for each language till one matches.
+        '
+            LanguageNumber = "Language_" & Number
+            
+            vLanguageName = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="Name")
+
+        
+        Do While vLanguageName <> ""
+            
+            ' This is so we can tell when we have processed all the languages.
+            ' The result is that there can be no gap in the sequence of language numbers
+            ' in Languages.ini file.
+            'PROBLEM WITH THIS: If a section exists where Key:Name = "" (null)
+            'this will fail. Possibly safer to use Number extracted from section names??
+            'It is possible to set a Key to "" in the DB(possibly a way to delete
+            'unwanted languages); you can't delete a section except manually.
+            
+            If vLanguageName = "" Then
+                Exit Do
+            End If
+            If vLanguageName = " " Then
+                Exit Do
+            End If
+            
+            vLanguageCode = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="Code")
+                    
+            vLanguageProjectCode = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="ProjectCode")
+                            
+            vLanguageProvince = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="Province")
+                    
+            vLanguageCountry = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="Country")
+                    
+            vLanguageFont = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="Font")
+                    
+            vLanguageHeadingFont = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="HeadingFont")
+            
+            vLanguageLeading = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="FontLeading")
+            
+            vLanguageSize = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="DefaultSizeInPoints")
+                
+            vPTNoFontChange = System.PrivateProfileString( _
+                FileName:=IniFile, _
+                Section:=LanguageNumber, _
+                Key:="PTNoFontChange")
+                   
+             vLanguageQuotesInProofPrintouts = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="QuotesInProofPrintouts")
+                
+            vLanguageDropCapChapterNumbers = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="DropCapChapterNumbers")
+                
+            vLanguageHideNumberForEachVerse1 = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="HideNumberForEachVerse1")
+                
+            vLanguageHeaderOutside = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="HeaderOutside")
+            
+            If vLanguageHeaderOutside = "" Then
+                vLanguageHeaderOutside = "PageNumber"
+                VariableSet "HeaderOutside", vLanguageHeaderOutside
+            End If
+
+            vLanguageHeaderOther = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="HeaderOther")
+
+            If vLanguageHeaderOther = "" Then
+                vLanguageHeaderOther = "inner"
+                VariableSet "HeaderOther", vLanguageHeaderOther
+            End If
+
+            vLanguageRestartFootnoteRefs = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="RestartFootnoteRefs")
+
+            vLanguageNoBreakHyphens = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="NoBreakHyphens")
+
+            vLanguageNoBreakSpaces = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="NoBreakSpaces")
+                
+            vLanguageBrackets2HalfBrackets = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="Brackets2HalfBrackets")
+
+            If vLanguageHideNumberForEachVerse1 = "yes" Then
+                sHideNumberForEachVerse1 = _
+                    "The number for verse 1 will be hidden in each chapter" & vbCrLf
+            Else
+                sHideNumberForEachVerse1 = ""
+            End If
+
+            vLanguageBoldVerseNumbers = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="BoldVerseNumbers")
+
+            Dim LangSummary As String
+            LangSummary = _
+                LanguageNumber & vbCrLf & vbCrLf & _
+                "The file " & Chr(34) & LanguageFileName & Chr(34) & _
+                " contains these settings for " & _
+                vLanguageCode & ":" & vbCrLf & vbCrLf & _
+                "Language: " & vbTab & vLanguageName & vbCrLf & _
+                "Code: " & vbTab & vbTab & vLanguageCode & vbCrLf & _
+                "Province: " & vbTab & vLanguageProvince & vbCrLf & _
+                "Country: " & vbTab & vbTab & vLanguageCountry & vbCrLf & _
+                "Font: " & vbTab & vbTab & vLanguageFont & vbCrLf & _
+                "   Font Size: " & vbTab & vLanguageSize & vbCrLf & _
+                "   Line Spacing: " & vbTab & vLanguageLeading & vbCrLf & _
+                "   Heading Font: " & vbTab & vLanguageHeadingFont & vbCrLf
+            
+            LangSummary = LangSummary & _
+                "Angle brackets (<< >>) changed to quotes in proof printouts:" & _
+                    vLanguageQuotesInProofPrintouts & vbCrLf & _
+                "Chapter numbers formatted as Drop Caps: " & _
+                    vLanguageDropCapChapterNumbers & vbCrLf & _
+                sHideNumberForEachVerse1 & _
+                "Footnotes restarting at 'a' each page: " & _
+                    VariableGet("RestartFootnoteRefs") & vbCr & _
+                "Hyphens will be non-breaking in Proof printouts: " & _
+                    VariableGet("NoBreakHyphens") & vbCr & _
+                "Hyphens will become thin no-break spaces in Booklets: " & _
+                    VariableGet("NoBreakSpaces") & vbCr & _
+                "Brackets ([ and ])will be be made into half brackets to mark implied infotmation: " & _
+                    VariableGet("Brackets2HalfBrackets") & vbCr & _
+                "Verse numbers will be bold: " & _
+                    VariableGet("BoldVerseNumbers") & vbCr & _
+                "Headers will have " & vLanguageHeaderOutside & " at the outside edge."
+
+            MsgBox LangSummary
+            
+'            Exit Do
+            
+            Number = Number + 1
+            LanguageNumber = "Language_" & Number
+            vLanguageName = System.PrivateProfileString( _
+                FileName:=IniFile, Section:=LanguageNumber, _
+                Key:="Name")
+            
+        Loop
+End Sub
+Sub LoadLanguageData()
+' Get language code and/or language name from ID line
+' and get attributes from Languages.ini in Paratext settings folder,
+' \My Paratext Projects by default,
+' and apply them.
+'
+' If no ID line, ask the user.
+'
+Dim USFM_draft As String
+Dim IniPT As String
+Dim LanguageNumber As String
+Dim Number As Integer
+Dim BookIDLen As Integer
+Dim Pattern1Matches As Boolean
+Dim Pattern2Matches As Boolean
+Dim CodeFound As Boolean
+Dim CodePosition As Integer
+Dim rID As Range
+Dim rAux As Range
+Dim rProjectCode As Range
+Dim myvar As Variable
+
+Dim StdPtID As Boolean
+Dim FoundSTS As Boolean
+Dim BookName As String
+Dim ProjectCodeFound As Boolean
+Dim EthCodeFound As Boolean
+Dim IDFound As Boolean
+
+Dim TextCode As String
+Dim TextProjectCode As String
+Dim TextLanguageName As String
+Dim CodeMatch As Boolean
+Dim FoundOrNot As String
+Dim MarkerLocation As Long
+
+Dim LanguageName As String
+Dim LanguageCode As String
+Dim LanguageProjectCode As String
+Dim LanguageProvince As String
+Dim LanguageCountry As String
+Dim LanguageFont As String
+Dim LanguageHeadingFont As String
+Dim LanguageSize As String
+Dim LanguageLeading As String
+Dim PTNoFontChange As String
+Dim LanguageNameTemp As String
+Dim LanguageQuotesInProofPrintouts As String
+Dim LanguageDropCapChapterNumbers As String
+Dim LanguageHideNumberForEachVerse1 As String
+Dim msgLanguageHideNumberForEachVerse1 As String
+Dim FileFontFromPT As String
+Dim HeaderOutside As String
+Dim HeaderOther As String
+Dim RestartFootnoteRefs As String
+Dim NoBreakHyphens As String
+Dim WillDoRestartFootnoteRefs As String
+Dim WillDoNoBreakHyphens As String
+Dim NoBreakSpaces As String
+Dim WillDoNoBreakSpaces As String
+Dim Brackets2HalfBrackets As String
+Dim WillDobrackets2HalfBrackets As String
+Dim BoldVerseNumbers As String
+Dim LanguageCheckingTable As String
+Dim ChangeStyles As String
+Dim Degree As String
+Dim IDline As String
+Dim IDHelpMsg As String
+
+IDHelpMsg = "To allow this template to find the correct language automatically, you should add " & vbCrLf & _
+            "the language name or Ethnologue code to the ID lines of your Scripture files. " & _
+            vbCrLf & vbCrLf & "To read about how to do this, open the QuickLaunch bar, " & vbCrLf & _
+            "and select the item, 'Silas Scripture Template Instructions,'" & vbCrLf & _
+            "or open the file, " & vbCrLf & _
+            "       Start Button -> (All) Programs -> Silas -> How to use Silas Scripture Template"
+
+Dim FileSystem As Object
+
+    If SetPathVariables = False Then Exit Sub
+
+    If IniFile = "" Then SetIniFile
+    Set FileSystem = CreateObject("Scripting.FileSystemObject")
+
+    ActiveWindow.ActivePane.View.Type = wdNormalView
+    VariableSet "NoLanguageSet", ""
+    VariableSet "InstallWarning", ""
+    
+    ' Remember the date and time the template was attached,
+    ' which will usually be very soon after the file was exported from Paratext.
+    '
+    VariableSet "WhenExported", Format(Now, "dd-Mmm-yyyy") & " at " & Format(Now, "hh:mm")
+
+    If VariableGet("USFM2Styles") = "needed" Then
+        USFM2Styles.USFM2Styles
+    End If
+    
+    ' Cludge to prevent Direct Formatting from hiding the fonts of styles
+    '
+    DirectFormattingCludge
+    
+    Selection.HomeKey Unit:=wdStory
+    
+    ActiveDocument.Styles("id - File - Identification").Font.ColorIndex = wdBlack
+    ActiveDocument.Styles("id - File - Identification").Font.Size = 10
+    
+    SetStandardFindOptions
+    Selection.Find.Style = ActiveDocument.Styles("id - File - Identification")
+    IDFound = Selection.Find.Execute
+    
+    If IDFound Then
+        ' step back off the paragraph mark
+        Selection.MoveEnd Unit:=wdCharacter, Count:=-1
+        Set rID = Selection.Range.Duplicate
+        
+        ' Remove \sts field so it won't appear to be
+        ' part of the language name.
+        '
+        With Selection.Find
+            .MatchWildcards = True
+            .Text = "\\sts [1-4]"
+            .Replacement.Text = ""
+        End With
+        
+        FoundSTS = Selection.Find.Execute
+        
+        If FoundSTS Then
+            rID.End = Selection.Start
+        End If
+        
+        ' add a space to the end of the line in case of \id MAT^p
+        ' or \id MAT NT0190^p
+        '
+        rID.InsertAfter " "
+        
+        Set rAux = rID.Duplicate
+        
+        ' Now we'll use wildcard searches to find things in the ID line found.
+        '
+        rID.Select
+        With Selection.Find
+            .MatchWildcards = True
+            
+            ' Standard Paratext ID line:
+            ' \id BUK - Language name
+            '
+            ' but when you transfer " - " by AlphaSmart manager,
+            ' the hyphen can end up an em-dash or something,
+            ' so second search item has to be more complex.
+            ' Word 2003 requires that we put it in () to match.
+            '
+'            .Text = "(<[1-4a-zA-Z]{3})([,;:\- ^=^+]{1,})"
+            .Text = "(<[1-4a-zA-Z]{3})([ ,;:\-^=^+]" & _
+                "{1" & Application.International(wdListSeparator) & "})"
+            .Replacement.Text = "\1 - "    ' normalize " - "
+        End With
+        
+        StdPtID = Selection.Find.Execute(Replace:=wdReplaceOne)
+        
+        If StdPtID Then
+            '
+            ' Get book name
+            '
+            BookName = Left(Selection.Text, 3)
+            
+            ' Select the rest of the line
+            '
+            rAux.Start = Selection.End
+            rAux.Select
+            
+            ' Look for a PNG-style project number:
+            ' NTnnnn or OTnnnn
+            '
+            With Selection.Find
+                .MatchWildcards = True
+                .Wrap = wdFindStop
+                '
+                .Text = "[oOnN][tT][0-9]{4}"
+                .Replacement.Text = ""
+            End With
+            ProjectCodeFound = Selection.Find.Execute
+            
+            If ProjectCodeFound Then
+                ' Step over the PNG project code.
+                '
+'                Selection.End = Selection.End - 1
+                TextProjectCode = Selection.Text
+'                TextProjectCode = Trim(Selection.Text)
+                VariableSet "ProjectCode", TextProjectCode
+                Set rProjectCode = Selection.Range.Duplicate
+
+                rAux.Start = Selection.End + 1
+                rAux.Select
+            End If
+            
+            ' Get language name
+            '
+            MarkerLocation = InStr(Selection.Text, "[")
+            
+            ' Trim any trailing spaces or hyphens.
+            '
+            If MarkerLocation > 0 Then
+                Selection.End = Selection.Start + MarkerLocation - 1
+                Selection.Start = Selection.End - 1
+                
+                Do While Selection.Start > rAux.Start
+                    If Selection.Text = " " _
+                    Or Selection.Text = "-" Then
+                        Selection.Start = Selection.Start - 1
+                        Selection.End = Selection.End - 1
+                    Else
+                        Exit Do
+                    End If
+                Loop
+                
+                Selection.Start = rAux.Start
+                TextLanguageName = Selection.Text
+                If TextLanguageName = "[" Or TextLanguageName = " " _
+                    Or TextLanguageName = vbCr Then TextLanguageName = ""
+                VariableSet "LanguageName", TextLanguageName
+                
+              
+                ' Now look for an Ethnologue code within the square brackets
+                '
+                rAux.Start = Selection.Start + MarkerLocation - 1
+                rAux.Select
+                With Selection.Find
+                    .MatchWildcards = True
+                    .Wrap = wdFindStop
+                    '
+                    .Text = "\[[a-zA-Z]{3}>"
+                    .Replacement.Text = ""
+                End With
+                EthCodeFound = Selection.Find.Execute
+                
+                If EthCodeFound Then
+                    Selection.Start = Selection.Start + 1
+                    Selection.End = Selection.End
+                    TextCode = Selection.Text
+                    VariableSet "LanguageCode", TextCode
+                End If
+            Else    ' no [COD editing details etc.]
+                TextLanguageName = Trim(Selection.Text)
+                If TextLanguageName = "[" Or TextLanguageName = " " _
+                    Or TextLanguageName = vbCr Then TextLanguageName = ""
+                VariableSet "LanguageName", TextLanguageName
+            End If
+        Else
+            GoTo NoIDLine
+        End If
+        
+' See what is Found:
+
+        If TextCode <> "" Then
+            FoundOrNot = "Found " & TextCode & " in the ID line:" & vbCrLf & _
+                            rID.Text & vbCr & vbCrLf
+        
+        ElseIf TextProjectCode <> "" Then
+            rProjectCode.Select
+            FoundOrNot = "Found " & TextProjectCode & " in the ID line:" & vbCrLf & _
+                            rID.Text & vbCrLf & vbCrLf
+        
+        ElseIf TextLanguageName <> "" Then
+            FoundOrNot = "Found " & TextLanguageName & " in the ID line:" & vbCrLf & _
+                            rID.Text & vbCrLf & vbCrLf
+        Else:
+            TextLanguageName = InputBox( _
+                Prompt:="The ID line doesn't contain any language name " & _
+                        "that I can recognize. Please enter the name of this language:" & _
+                        vbCrLf & vbCrLf, _
+                Title:="Request for Language Name", _
+                Default:="English")
+
+            If TextLanguageName = "" Then
+                MsgBox "The language for this file has not been set. You will need to do the job, " & _
+                   Chr(34) & "Set Language Project For This Text" & Chr(34) & " on the " & Chr(34) & "ScrLanguages" & Chr(34) & " menu."
+            Else
+                VariableSet "LanguageName", TextLanguageName
+                FoundOrNot = "You specified the language " & _
+                                TextLanguageName & " . . . " & vbCrLf & vbCrLf & _
+                                "If you want the language to be identified automatically " & _
+                                "when you work with your Scripture files, please add the language name " & _
+                                "or the Ethnologue code to the \id line of each book in your Scripture project." & _
+                                vbCrLf & vbCrLf & "Some examples of \id lines:" & vbCrLf & _
+                                "   \id MAT Hanga Hundi [you can put other information here if you like, in square brackets]" & vbCrLf & _
+                                "   \id MAT [Ethnologue code here, e.g. WOS]" & vbCrLf & _
+                                "   \id MAT Hanga Hundi [WOS Advisor checked 15 Oct 2007]" & vbCrLf & vbCrLf
+                                
+            End If
+        End If
+    Else: GoTo NoIDLine
+    End If
+
+    ' Check to see if Languages.ini exists in the Paratext settings folder.
+    '
+    If Not FileSystem.FileExists(IniFile) Then Call CreateIniFile
+
+    Number = 1  ' Start with record Language_1
+    
+    ' Get data for each language till one matches.
+    '
+    CodeMatch = False
+    
+    Do
+        LanguageNumber = "Language_" & Number
+        LanguageCheckingTable = ""
+        
+        LanguageNameTemp = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="Name")
+        
+        ' This is so we can tell when we have processed all the languages.
+        ' The result is that there can be no gap in the sequence of language numbers
+        ' in Languages.ini file.
+        '
+        If LanguageNameTemp = " " Then LanguageNameTemp = ""
+        If LanguageNameTemp = "" Then Exit Do
+        
+        LanguageName = LanguageNameTemp
+        
+        LanguageCode = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="Code")
+        
+        LanguageProjectCode = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="ProjectCode")
+        
+        LanguageProvince = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="Province")
+        
+        LanguageCountry = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="Country")
+        
+        LanguageFont = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="Font")
+            
+        LanguageHeadingFont = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="HeadingFont")
+        
+        LanguageLeading = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="FontLeading")
+            
+        LanguageSize = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="DefaultSizeInPoints")
+    
+        LanguageQuotesInProofPrintouts = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="QuotesInProofPrintouts")
+    
+        LanguageDropCapChapterNumbers = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="DropCapChapterNumbers")
+            
+        LanguageHideNumberForEachVerse1 = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="HideNumberForEachVerse1")
+            
+        PTNoFontChange = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="PTNoFontChange")
+            
+        HeaderOutside = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="HeaderOutside")
+    
+        HeaderOther = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="HeaderOther")
+    
+        RestartFootnoteRefs = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="RestartFootnoteRefs")
+    
+        NoBreakHyphens = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="NoBreakHyphens")
+    
+        NoBreakSpaces = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="NoBreakSpaces")
+    
+        Brackets2HalfBrackets = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="Brackets2HalfBrackets")
+    
+        BoldVerseNumbers = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="BoldVerseNumbers")
+    
+        LanguageCheckingTable = System.PrivateProfileString( _
+            FileName:=IniFile, Section:=LanguageNumber, _
+            Key:="CheckingTable")
+            
+        If TextCode <> "" And LanguageCode = TextCode Then
+            CodeMatch = True
+            Exit Do
+        End If
+        
+        If TextProjectCode <> "" And LanguageProjectCode = TextProjectCode Then
+            CodeMatch = True
+            Exit Do
+        End If
+        
+        If TextLanguageName <> "" And TextLanguageName = LanguageName Then
+            CodeMatch = True
+            Exit Do
+        End If
+        
+        Number = Number + 1
+    Loop While LanguageName <> ""
+    
+    'now set doc.variables so they'll be found later on
+    '"If" statements should preserve what was found in ID line if no Inifile match;
+    ' if not found in ID line, a value will reflect the last recorded language in Inifile
+    '   except for Ethnologue Code and Project Code
+    '
+    If LanguageNameTemp <> "" Then VariableSet "LanguageName", LanguageNameTemp
+    If TextCode <> "" Then VariableSet "LanguageCode", TextCode
+    If TextProjectCode <> "" Then VariableSet "ProjectCode", TextProjectCode
+    VariableSet "LanguageNumber", LanguageNumber
+    VariableSet "LanguageProvince", LanguageProvince
+    VariableSet "LanguageCountry", LanguageCountry
+    VariableSet "LanguageFont", LanguageFont
+    VariableSet "HeadingFont", LanguageHeadingFont
+    VariableSet "Leading", LanguageLeading
+    VariableSet "LanguageSize", LanguageSize
+    VariableSet "QuotesInProofPrintouts", LanguageQuotesInProofPrintouts
+    VariableSet "DropCapChapterNumbers", LanguageDropCapChapterNumbers
+    VariableSet "HideNumberForEachVerse1", LanguageHideNumberForEachVerse1
+    VariableSet "PTNoFontChange", PTNoFontChange
+    VariableSet "HeaderOutside", HeaderOutside
+    VariableSet "HeaderOther", HeaderOther
+    VariableSet "RestartFootnoteRefs", RestartFootnoteRefs
+    VariableSet "NoBreakHyphens", NoBreakHyphens
+    VariableSet "NoBreakSpaces", NoBreakSpaces
+    VariableSet "Brackets2HalfBrackets", Brackets2HalfBrackets
+    VariableSet "BoldVerseNumbers", BoldVerseNumbers
+    VariableSet "CheckingTable", LanguageCheckingTable
+    
+    ' ShowDocumentVariables  'debug
+    
+    If IDFound Or Number = 2 Then   ' ID line found, or only one record in Languages.ini
+    
+        If CodeMatch <> True And Number = 2 Then
+            Msg = FoundOrNot & _
+                "Your Language Settings file contains settings for only one language, " & _
+                Chr(34) & LanguageName & Chr(34) & ". " & _
+                vbCrLf & "Is this language correct for your current Scripture portion?" & _
+                vbCrLf & vbCrLf & "If you select " & Chr(34) & "No " & Chr(34) & _
+                "here, you will be able to add a new language in the next screen."
+            Style = vbQuestion + vbYesNoCancel
+            Title = "Confirm Single Language"
+            Result = MsgBox(Msg, Style, Title)
+            
+            If Result = vbCancel Then GoTo NoLangSet
+            If Result = vbNo Then AddNewLanguageToIni
+        ElseIf CodeMatch = True Then
+          ' Compare PT font with IniFile Font
+            SetDefaultFont
+            ShowLanguageInfoForm
+            If VariableGet("NoLanguageSet") = "True" Then GoTo EndSub
+        ElseIf TextCode <> "" Then
+                Msg = FoundOrNot & _
+                    "The file " & Chr(34) & LanguageFileName & Chr(34) & _
+                    " doesn't contain a record for " & vbCrLf & _
+                    Chr(34) & TextCode & Chr(34) & _
+                    ". Please select a language from the list in the " & _
+                    "next window, or you may add a new language " & _
+                    "to the list if you need to."
+                Title = "No Language Found in ID (1)"
+                Style = vbOKOnly + vbCritical
+                MsgBox Msg, Style, Title
+            
+            ShowLanguagesList
+    
+        ElseIf TextProjectCode <> "" Then
+                Msg = FoundOrNot & _
+                    "The file " & Chr(34) & LanguageFileName & Chr(34) & _
+                    " doesn't contain a record " & vbCrLf & _
+                    "for " & Chr(34) & TextProjectCode & Chr(34) & _
+                    ". Please select a language from the list in the " & _
+                    "next window, or you may add a new language " & _
+                    "to the list if you need to."
+                Title = "No Language Found in ID (2)"
+                Style = vbOKOnly + vbCritical
+                MsgBox Msg, Style, Title
+            
+            ShowLanguagesList
+            
+        ElseIf TextLanguageName <> "" Then
+                Msg = FoundOrNot & _
+                    "The file " & Chr(34) & LanguageFileName & Chr(34) & _
+                    " doesn't contain a record for " & Chr(34) & TextLanguageName & Chr(34) & _
+                    ". " & vbCrLf & _
+                    "Please select a language from the list in the next window, " & vbCrLf & _
+                    "or you may add a new language to the list if you need to."
+                Title = "No Language Found in ID (3)"
+                Style = vbOKOnly + vbCritical
+                MsgBox Msg, Style, Title
+            
+            ShowLanguagesList
+    
+        Else
+            Msg = FoundOrNot & _
+                "The template has been attached, but I can't find a language identifier" & vbCrLf & _
+                "in your ID line. If  you would like to set a language project " & _
+                "or add a new project now, click 'Yes'." & vbCrLf & vbCrLf & _
+                IDHelpMsg
+            Style = vbYesNo + vbCritical
+            Title = "No Language Identified in ID Line"
+            Result = MsgBox(Msg, Style, Title)
+            If Result = vbYes Then ShowLanguagesList
+            If Result = vbNo Then GoTo NoLangSet
+        End If
+    
+        If VariableGet("LanguageName") = "" Then GoTo NoLangSet
+        
+        DoFontChangesFromIni
+        AskForHeaderAndTitle
+        If System.PrivateProfileString( _
+            FileName:=IniFile, Section:="Messages", _
+            Key:="DontShowInstructions") <> "True" Then dbWhatYouCanDo.Show
+    End If
+    GoTo EndSub
+NoIDLine:
+    Result = MsgBox("The template has been attached, but your text does not have " & vbCrLf & _
+            "a standard USFM ID line. You should choose the language project you " & vbCrLf & _
+            "want to use for this text." & vbCrLf & vbCrLf & _
+            "If you would like to do this now, click 'Yes'.", _
+            vbCritical + vbYesNo, "No Language Set (LLD)")
+    If Result = vbYes Then
+        ShowLanguagesList
+        If VariableGet("LanguageName") = "" _
+                Or VariableGet("LanguageName") = " " Then
+            GoTo NoLangSet
+        Else:
+            AddIDLine
+            DoFontChangesFromIni
+            AskForHeaderAndTitle
+            If System.PrivateProfileString( _
+                FileName:=IniFile, Section:="Messages", _
+                Key:="DontShowInstructions") <> "True" Then dbWhatYouCanDo.Show
+
+        End If
+    Else
+        GoTo NoLangSet
+    End If
+    GoTo EndSub
+    
+NoLangSet:
+    For Each myvar In ActiveDocument.Variables
+        If myvar.Name <> "ChangeStyles" Then myvar.Delete
+        Next myvar
+    VariableSet "NoLanguageSet", "True"
+    CancelFormatting = False
+    If VariableGet("WhenExported") = "" Then
+        VariableSet "WhenExported", _
+            Format(Now, "dd-Mmm-yyyy") & " at " & Format(Now, "hh:mm")
+    End If
+    GoTo EndSub
+    
+EndSub:
+    ' If any styles are being updated,
+    '   write a message in the Ini file.
+    '   (This is a good time to do it,
+    '    because the ID line has been found or made.)
+    '
+    ChangeStyles = VariableGet("ChangeStyles")
+    
+    If ChangeStyles = "Original_Styles.txt" Then
+        Degree = "VERY"
+    ElseIf ChangeStyles = "Recent_Styles.txt" Then
+        Degree = "a bit"
+    Else
+        ChangeStyles = ""
+    End If
+    
+    ' IF the file was made with a draft version of USFM.sty,
+    '   even the latest version will appear as "Recent",
+    '   so we need to not complain about that.
+    '
+    USFM_draft = VariableGet("USFM_draft")
+    
+    If ChangeStyles <> "" Then
+        System.PrivateProfileString( _
+            FileName:=IniFile, Section:="Messages", _
+            Key:="OldStylenamesDetected") = _
+                ChangeStyles & ", " & _
+                Format(Now, "dd-Mmm-yyyy") & " at " & Format(Now, "hh:mm")
+
+        System.PrivateProfileString( _
+            FileName:=IniFile, Section:="Messages", _
+            Key:="OldStylenamesID") = " "
+        
+        IDline = ""
+        On Error GoTo -1: On Error GoTo NoIDRange
+        IDline = rID.Text
+NoIDRange:
+        On Error GoTo 0
+        
+        If IDline = "" Then
+            IDline = _
+                VariableGet("idBookCode") & " - " & _
+                VariableGet("LanguageName") & " " & _
+                VariableGet("idVersionInfo")
+        End If
+        
+        If IDline = " -  " Or IDline = "" Then
+        Else
+            System.PrivateProfileString( _
+                FileName:=IniFile, Section:="Messages", _
+                Key:="OldStylenamesID") = IDline
+        End If
+        
+        If USFM_draft <> "yes" Then
+            MsgBox "By the way, the stylesheet used to make this file is " & Degree & " out-of-date." & vbCr & _
+                "Some functions of the Silas package might not work." & vbCr & _
+                "Please tell your support person and ask about using" & vbCr & _
+                "the latest version of the stylesheet, USFM.sty or USFM_draft.sty." & vbCr & vbCr & _
+                "The details are in the file " & vbCr & vbTab & IniFile & vbCr & _
+                "in the section called [Messages].", _
+                vbOKOnly, "Style names from out-of-date stylesheet"
+        End If
+        
+        VariableSet "ChangeStyles", ""
+    End If
+    
+    SetStandardFindOptions
+    SetDefaultView
+End Sub
+Sub DoFontChangesFromIni()
+    Dim tmpBoldVerseNumbers
+    
+    ChangeFontSize.CallDoChangeSize
+    ' ShowDocumentVariables 'for debugging
+
+    ChangeLineSpacingPoints.SingleSpacingNew
+    
+    ActiveDocument.Styles("_Vernacular_Base").Font.Name _
+        = VariableGet("LanguageFont")
+    ActiveDocument.Styles("_Vernacular_word(s)").Font.Name _
+        = VariableGet("LanguageFont")
+    If VariableGet("HeadingFont") <> "" And VariableGet("HeadingFont") <> " " Then
+        ActiveDocument.Styles("_Heading_Base").Font.Name _
+            = VariableGet("HeadingFont")
+    End If
+    
+    tmpBoldVerseNumbers = VariableGet("BoldVerseNumbers")
+    
+    If tmpBoldVerseNumbers = "yes" Then
+        ActiveDocument.Styles("v - Verse Number").Font.Bold = True
+    Else
+        ActiveDocument.Styles("v - Verse Number").Font.Bold = False
+    End If
+End Sub
+
+

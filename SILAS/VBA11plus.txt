@@ -1,0 +1,18 @@
+Attribute VB_Name = "VBA11plus"
+' for code that works in VBA for word version 11 (ie. Word 2003) and higher
+' in a separate module so it can be removed to check compilation
+' in older versions of VBA
+'
+Option Explicit
+
+Sub Table_SetStyleOptions()
+    If Val(Application.Version) >= Wd2003 Then
+        With Selection.Tables(1)
+            .ApplyStyleHeadingRows = False  ' We have our own styles,
+            .ApplyStyleLastRow = False      ' and don't want Word to
+            .ApplyStyleFirstColumn = False  ' change things.
+            .ApplyStyleLastColumn = False
+        End With
+    End If
+End Sub
+

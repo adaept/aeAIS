@@ -1,0 +1,2447 @@
+Attribute VB_Name = "USFM2Styles"
+' For converting USFM data to styled data
+'
+' Also corrects some formatting errors.
+'
+' Jim Henderson, 2007-10-09
+'
+Dim rSlosh As Range         ' any \ found
+Dim rCode As Range          ' the code after the slosh
+Dim rStar As Range          ' the star that ends the code (if any)
+Dim StarFound As Boolean
+Dim rEnder As Range         ' the whitespace that ends the code
+
+Dim rThisPara As Range
+Dim rNote As Range          ' the whole footnote or endnote
+Dim rCharStyle As Range     ' The range the characters style should apply to
+
+Dim rParaSlosh As Range     ' points to \ at start of this paragraph
+Dim rParaCode As Range      ' code for this paragraph
+Dim rParaCodeEnder As Range ' whitespace that ends code for this paragraph
+Dim rParaContent As Range   ' text of this paragraph
+Dim rParaEnder As Range     ' whitespace that ends this paragraph
+
+Dim rNextParaSlosh As Range ' slosh for next para's code
+Dim rNextParaCode As Range  ' code for next paragraph
+
+Dim rNextSlosh As Range     ' slosh for an intermediate code
+Dim rNextCode As Range      ' code for a character style
+
+Dim InNote As Boolean   ' Set when a \f or \x etc code found.
+Dim NoteCharStyle As Boolean   ' Set when any \fk or \ft or \xt etc found.
+Dim IsEndnote As Boolean    ' determines the type of note
+Dim StartNoteNow As Boolean    ' set when a footnote or endnote is starting
+Dim FinishNoteNow As Boolean    ' set when a footnote or endnote is ending code found
+Dim NoteStarted As Boolean
+Dim NoteCode As String      ' contains f or fe or x while InNote
+Dim InHeader As Boolean
+Dim HeaderVerseWithoutPara As Boolean
+
+Dim InText As Boolean       ' for formatting numbers as verse numbers
+Dim NumMayBeVerseNum As Boolean
+
+Const Unknown As Integer = 0
+Const Char As Integer = 1
+Const Note As Integer = 2
+Const para As Integer = 4
+
+Option Explicit
+Sub AddFootnote()
+' Sub AddFootnote(NoteCharStyle As Boolean, sStyle As String)
+'
+' AddFootnote Macro
+' Macro recorded 9/23/2007 by Jim Henderson
+'
+' Call with the text of the footnote in rNote.
+'
+    Dim LastCharacter As Long
+    Dim sCallerCode As String
+    Dim n As Long
+    Dim FoundBS As Boolean
+    Dim rCaller As Range
+    
+    ' Step over the footnote or crossreference code
+    '
+    rNote.Select
+    Set rCaller = rNote.Duplicate
+    
+    FoundBS = False
+    Selection.Find.ClearFormatting
+    With Selection.Find
+        .Text = "\"
+        .Replacement.Text = ""
+        .Forward = True
+        .MatchWildcards = False
+        .Wrap = wdFindStop
+        .Format = False
+    End With
+    FoundBS = Selection.Find.Execute
+    
+    If FoundBS Then
+        GetCode
+        rCaller.Start = rEnder.End
+    End If
+    
+    ' Find out the caller code
+    '
+    For n = 1 To rCaller.Characters.Count
+        Select Case rCaller.Characters(n)
+        Case "+", "-"
+            sCallerCode = rCaller.Characters(n)
+            rCaller.Characters(n).Delete
+            
+            If rCaller.Characters(n) = " " Then
+                rCaller.Characters(n).Delete
+                GoTo CallerFound
+            End If
+        Case " "
+            sCallerCode = Left(rCaller.Text, n - 1)
+            rCaller.End = rCaller.Start + n
+            rCaller.Delete
+            GoTo CallerFound
+        Case "\"
+            sCallerCode = "-"
+            GoTo CallerFound
+        End Select
+CallerLoop:
+    Next n
+    
+CallerFound:
+    n = Len(sCallerCode)
+    
+    Select Case sCallerCode
+    Case "+"
+        sCallerCode = ""
+    Case "-"
+        sCallerCode = "*"
+    End Select
+    
+    rSlosh.Select
+    Selection.Collapse
+    
+    With ActiveDocument.Range(Start:=ActiveDocument.Content.Start, _
+                                End:=ActiveDocument.Content.End)
+        If IsEndnote Then
+            With ActiveDocument.Endnotes
+                .Location = wdEndOfDocument
+                .NumberingRule = wdRestartContinuous
+                .StartingNumber = 1
+                .NumberStyle = wdNoteNumberStyleLowercaseRoman
+            End With
+
+'            With .EndnoteOptions
+'                .Location = wdEndOfDocument
+'                .NumberingRule = wdRestartContinuous
+'                .NumberStyle = wdNoteNumberStyleUppercaseLetter
+'                .StartingNumber = 1
+'            End With
+            .Endnotes.Add _
+                Range:=Selection.Range, _
+                Reference:=sCallerCode, _
+                Text:=rNote.Text
+        Else
+            With ActiveDocument.Footnotes
+                .Location = wdBottomOfPage
+                .NumberingRule = wdRestartPage
+                .NumberStyle = wdNoteNumberStyleLowercaseLetter
+                ' .NumberingRule = wdRestartContinuous
+                .StartingNumber = 1
+            End With
+            .Footnotes.Add _
+                Range:=Selection.Range, _
+                Reference:=sCallerCode, _
+                Text:=rNote.Text
+        End If
+    End With
+    
+    rNote.Start = rNote.Start + n
+    
+    If rNote.Characters.Last = vbCr Then
+        rNote.End = rNote.End - 1
+    End If
+    
+    rNote.Delete
+    Set rNote = Nothing
+    NoteStarted = False
+    Set rCaller = Nothing
+    IsEndnote = False
+    InNote = False
+End Sub
+Sub ApplyCharStyle(ByRef rCharStyle As Range, ByRef sCharStyleToApply As String)
+    If rCharStyle.End = rCharStyle.Start Then
+        rCharStyle.End = rSlosh.Start
+    End If
+    
+    On Error Resume Next
+    rCharStyle.Style = ActiveDocument.Styles(sCharStyleToApply)
+    On Error GoTo 0
+    sCharStyleToApply = ""
+End Sub
+Sub ChangeAt2Quote()
+    ' Change At signs to double quote characters.
+    '
+    NoAutoThings
+    SetStandardFindOptions
+    Selection.Find.ClearFormatting
+    Selection.Find.Replacement.ClearFormatting
+    With Selection.Find
+        .Text = "@"
+        .Replacement.Text = """"
+        .Forward = True
+        .Wrap = wdFindContinue
+        .Format = False
+    End With
+    Selection.Find.Execute Replace:=wdReplaceAll
+    SetStandardFindOptions
+End Sub
+Sub ChangeTildeToFixedSpace()
+    ' Change tilde characters to fixed spaces.
+    '
+    NoAutoThings
+    SetStandardFindOptions
+    Selection.Find.ClearFormatting
+    Selection.Find.Replacement.ClearFormatting
+    With Selection.Find
+        .Text = "~"
+        .Replacement.Text = "^s"
+        .Forward = True
+        .Wrap = wdFindContinue
+        .Format = False
+    End With
+    Selection.Find.Execute Replace:=wdReplaceAll
+    SetStandardFindOptions
+End Sub
+Function CodeType(ByRef StyleName As String) As Integer
+' Returns true if this the global ranges point to a paragraph code
+'
+    Dim CodeReplaced As Boolean
+    
+    NoteCharStyle = False
+    StartNoteNow = False
+    FinishNoteNow = False
+    StyleName = ""
+    NoteCharStyle = False
+    
+    ' Exclude any star from the code for now.
+    '
+    If StarFound Then rCode.End = rStar.Start
+    
+    ' Check the more frequent codes first.
+    '
+CheckFrequentCodes:
+    CodeType = para
+    
+    Select Case rCode.Text
+        Case "p"
+            StyleName = StdParaStyle
+            HeaderVerseWithoutPara = False
+            InHeader = False
+        Case "v"
+            CodeType = Char
+            StyleName = StdVerseStyle
+            
+            If InHeader Then HeaderVerseWithoutPara = True
+        Case "q"
+            StyleName = "q - Poetry - Indent Level 1 - Single Level Only"
+        Case "q1"
+            StyleName = "q1 - Poetry - Indent Level 1"
+        Case "q2"
+            StyleName = "q2 - Poetry - Indent Level 2"
+        Case Else
+DecideLessFrequent:
+            CodeReplaced = False
+            
+            Select Case rCode.Text
+            Case "add"
+                StyleName = "add...add* - Special Text - Translational Addition"
+            Case "addpn"
+                StyleName = "(addpn...addpn*) - Special Text for Chinese"
+            Case "b"
+                StyleName = "b - Poetry - Stanza Break (Blank Line)"
+            Case "bd"
+                StyleName = "bd...bd* - Character - Bold Text"
+            Case "bdit"
+                StyleName = "bdit...bdit* - Character - BoldItalic Text"
+            Case "bk"
+                StyleName = "bk...bk* - Special Text - Quoted book title"
+            Case "c"
+                StyleName = StdChapterStyle
+            Case "ca"
+                StyleName = "ca...ca* - Chapter Number - Alternate"
+            Case "cd"
+                StyleName = "cd - Chapter - Description"
+            Case "cl"
+                StyleName = "cl - Chapter - Publishing Label"
+            Case "cls"
+                StyleName = "cls - Paragraph - Closure of an Epistle"
+            Case "conc"
+                StyleName = "OBSOLETE conc Peripherals - Back Matter Concordance"
+            Case "cov"
+                StyleName = "OBSOLETE cov Peripherals - Other - Cover"
+            Case "cp"
+                StyleName = "cp - Chapter Number - Publishing Alternate"
+            Case "d"
+                StyleName = "d - Heading - Descriptive Title - Hebrew Subtitle"
+            Case "dc"
+                StyleName = "dc...dc* - Special Text - Deuterocanonical/LXX Additions"
+            Case "efm"
+                CodeType = Char
+                StyleName = "efm - Study Note - ID/Caller"
+            Case "em"
+                StyleName = "em...em* - Character - Emphasized Text"
+            
+            Case "f"
+                StyleName = "f...f* - Footnote"
+                ' StartNoteNow = True
+                CodeType = Note
+            Case "fe"
+                StyleName = "fe...fe* - Endnote"
+                ' StartNoteNow = True
+                IsEndnote = True
+                CodeType = Note
+            Case "fdc"
+                StyleName = "fdc...fdc* - Footnote - DC text"
+            Case "x"
+                StyleName = "x...x* - Cross Reference"
+                ' StartNoteNow = True
+                CodeType = Note
+            Case "xdc"
+                StyleName = "xdc...xdc* - Cross Reference - DC Target Refs"
+            Case "xnt"
+                StyleName = "xnt...xnt* - Cross Reference - NT Target Refs (optional)"
+            Case "xot"
+                StyleName = "xot...xot* - Cross Reference - OT Target Refs (optional)"
+            
+            Case "fig"
+                StyleName = "fig...fig* - Auxiliary - Figure/Illustration/Map"
+            Case "fk"
+                StyleName = "fk - Footnote - Keyword"
+            Case "fl"
+                StyleName = "fl - Footnote - Label Text"
+            Case "fm"
+                StyleName = "fm - Footnote - Additional Caller to Previous Note"
+            Case "fp"
+                StyleName = "fp - Footnote Paragraph Mark"
+            Case "fq"
+                StyleName = "fq - Footnote - Quotation or Alternate Rendering"
+            Case "fqa"
+                StyleName = "fqa - Footnote - Alternate Translation Rendering"
+                CodeType = Char
+                InNote = True
+            Case "fr"
+                StyleName = "fr - Footnote - Reference"
+            Case "ft"
+                StyleName = "ft - Footnote - Text"
+            Case "fv"
+                StyleName = "fv...fv* - Footnote - Embedded Verse Number"
+            Case "glo"
+                StyleName = "OBSOLETE glo Peripherals - Back Matter Glossary"
+            Case "h"
+                StyleName = "h - File - Header"
+            Case "h1"
+                StyleName = "h1 - File - Header"
+            Case "h2"
+                StyleName = "h2 - File - Left Header"
+            Case "h3"
+                StyleName = "h3 - File - Right Header"
+            Case "ib"
+                StyleName = "ib - Introduction - Blank Line"
+            Case "id"
+                StyleName = "id - File - Identification"
+            Case "ide"
+                StyleName = "ide - File - Encoding"
+            Case "idx"
+                StyleName = "OBSOLETE idx Peripherals - Back Matter Index"
+            Case "ie"
+                StyleName = "ie - Introduction - End Marker"
+            Case "iex"
+                StyleName = "iex - Introduction - Explanatory or Bridge Text"
+            Case "ili"
+                StyleName = "ili - Introduction - List Entry - Level 1"
+            Case "ili1"
+                StyleName = "ili1 - Introduction - List Entry - Level 1"
+            Case "ili2"
+                StyleName = "ili2 - Introduction - List Entry - Level 2"
+            Case "im"
+                StyleName = "im - Introduction - Paragraph - no first line indent"
+            Case "imi"
+                StyleName = "imi - Introduction - Indented Para - no first line indent"
+            Case "imq"
+                StyleName = "imq - Introduction - Paragraph - quote from text - no first line indent"
+            Case "imt"
+                StyleName = "imt - Introduction - Major Title Level 1"
+            Case "imt1"
+                StyleName = "imt1 - Introduction - Major Title Level 1"
+            Case "imt2"
+                StyleName = "imt2 - Introduction - Major Title Level 2"
+            Case "imt3"
+                StyleName = "imt3 - Introduction - Major Title Level 3"
+            Case "imt4"
+                StyleName = "imt4 - Introduction - Major Title Level 4"
+            Case "imte"
+                StyleName = "imte - Introduction - [Uncommon] Major Title at Introduction End"
+            Case "intro"
+                StyleName = "OBSOLETE intro Peripherals - Front Matter Introduction"
+            Case "io"
+                StyleName = "io - Introduction - Outline Level 1"
+            Case "io1"
+                StyleName = "io1 - Introduction - Outline Level 1"
+            Case "io2"
+                StyleName = "io2 - Introduction - Outline Level 2"
+            Case "io3"
+                StyleName = "io3 - Introduction - Outline Level 3"
+            Case "io4"
+                StyleName = "io4 - Introduction - Outline Level 4"
+            Case "ior"
+                StyleName = "ior...ior* - Introduction - Outline References Range"
+            Case "iot"
+                StyleName = "iot - Introduction - Outline Title"
+            Case "ip"
+                StyleName = "ip - Introduction - Paragraph"
+            Case "ipi"
+                StyleName = "ipi - Introduction - Indented Para - first line indent"
+            Case "ipq"
+                StyleName = "ipq - Introduction - Paragraph - quote from text"
+            Case "ipr"
+                StyleName = "ipr - Introduction - Paragraph - right aligned"
+            Case "iq"
+                StyleName = "iq - Introduction - Poetry Level 1"
+            Case "iq1"
+                StyleName = "iq1 - Introduction - Poetry Level 1"
+            Case "iq2"
+                StyleName = "iq2 - Introduction - Poetry Level 2"
+            Case "iq3"
+                StyleName = "iq3 - Introduction - Poetry Level 3"
+            Case "iqt"
+                StyleName = "iqt...iqt* - Special Text - Quoted Scripture Text in Introduction"
+            Case "is"
+                StyleName = "is - Introduction - Section Heading Level 1"
+            Case "is1"
+                StyleName = "is1 - Introduction - Section Heading Level 1"
+            Case "is2"
+                StyleName = "is2 - Introduction - Section Heading Level 2"
+            Case "it"
+                StyleName = "it...it* - Character - Italic Text"
+            Case "k"
+                StyleName = "k...k* - Special Text - Keyword"
+            Case "k1"
+                StyleName = "k1 - Periph - Concordance Keyword Level 1"
+            Case "k2"
+                StyleName = "k2 - Periph - Concordance Keyword Level 2"
+            Case "li"
+                StyleName = "li - List Entry - Level 1"
+            Case "li1"
+                StyleName = "li1 - List Entry - Level 1"
+            Case "li2"
+                StyleName = "li2 - List Entry - Level 2"
+            Case "li3"
+                StyleName = "li3 - List Entry - Level 3"
+            Case "li4"
+                StyleName = "li4 - List Entry - Level 4"
+            Case "lit"
+                StyleName = "lit - Special Text - Liturgical note"
+            Case "m"
+                StyleName = "m - Paragraph - Margin - No First Line Indent"
+            Case "maps"
+                StyleName = "OBSOLETE maps Peripherals - Back Matter Map Index"
+            Case "mi"
+                StyleName = "mi - Paragraph - Indented - No First Line Indent"
+            Case "mr"
+                StyleName = "mr - Heading - Major Section Range References"
+            Case "ms"
+                StyleName = "ms - Heading - Major Section Level 1"
+            Case "ms1"
+                StyleName = "ms1 - Heading - Major Section Level 1"
+            Case "ms2"
+                StyleName = "ms2 - Heading - Major Section Level 2"
+            Case "ms3"
+                StyleName = "ms3 - Heading - Major Section Level 3"
+            Case "mt"
+                StyleName = "mt - Title - Major Title Level 1"
+            Case "mt1"
+                StyleName = "mt1 - Title - Major Title Level 1"
+            Case "mt2"
+                StyleName = "mt2 - Title - Major Title Level 2"
+            Case "mt3"
+                StyleName = "mt3 - Title - Major Title Level 3"
+            Case "mt4"
+                StyleName = "mt4 - Title - Major Title level 4"
+            Case "mte"
+                StyleName = "mte - Title - [Uncommon] Major Title Ending Level 1"
+            Case "mte1"
+                StyleName = "mte1 - Title - [Uncommon] Major Title Ending Level 1"
+            Case "mte2"
+                StyleName = "mte2 - Title - [Uncommon] Major Title Ending Level 2"
+            Case "nb"
+                StyleName = "nb - Paragraph - No Break with Previous Paragraph"
+            Case "nc"               ' Note Centred from PNG codes.
+                rCode.Text = "iex"  ' I think \iex would be better for this. Jim
+                CodeReplaced = True
+            Case "nd"
+                StyleName = "nd...nd* - Special Text - Name of Deity"
+            Case "ndx"
+                StyleName = "ndx...ndx* - Peripheral Ref - Subject Index Entry "
+            Case "no"
+                StyleName = "no...no* - Character - Normal Text"
+            Case "ord"
+                StyleName = "ord...ord* - Special Text - Ordinal number text portion"
+            Case "p1"
+                StyleName = "p1 - Periph - Front/Back Matter Paragraph Level 1"
+            Case "p2"
+                StyleName = "p2 - Periph - Front/Back Matter Paragraph Level 2"
+            Case "pb"
+                StyleName = "pb - Break - Page Break"
+            Case "pc"
+                StyleName = "pc - Paragraph - Centered (for Inscription)"
+            Case "pde"              ' from old versions of USFM
+                rCode.Text = "pmc"
+                CodeReplaced = True
+            Case "pdi"              ' from old versions of USFM
+                rCode.Text = "pmo"
+                CodeReplaced = True
+            Case "periph"
+                StyleName = "periph - Peripherals - Content Division Marker"
+            Case "ph"
+                rCode.Text = "li"
+                CodeReplaced = True
+            Case "ph1"
+                rCode.Text = "li1"
+                CodeReplaced = True
+            Case "ph2"
+                rCode.Text = "li2"
+                CodeReplaced = True
+            Case "ph3"
+                rCode.Text = "li3"
+                CodeReplaced = True
+            Case "phi"
+                rCode.Text = "li4"
+                CodeReplaced = True
+            Case "pi"
+                StyleName = "pi - Paragraph - Indented - Level 1 - First Line Indent"
+            Case "pi1"
+                StyleName = "pi1 - Paragraph - Indented - Level 1 - First Line Indent"
+            Case "pi2"
+                StyleName = "pi2 - Paragraph - Indented - Level 2 - First Line Indent"
+            Case "pi3"
+                StyleName = "pi3 - Paragraph - Indented - Level 3 - First Line Indent"
+            Case "pm"
+                StyleName = "pm - Paragraph - Embedded Text"
+            Case "pmc"
+                StyleName = "pmc - Paragraph - Embedded Text Closing"
+            Case "pmo"
+                StyleName = "pmo - Paragraph - Embedded Text Opening"
+            Case "pmr"
+                StyleName = "pmr - Paragraph - Embedded Text Refrain"
+            Case "pn"
+                StyleName = "pn...pn* - Special Text - Proper Name"
+            Case "pr"
+                rCode.Text = "pmr"
+                CodeReplaced = True
+            Case "pref"
+                StyleName = "OBSOLETE pref Peripherals - Front Matter Preface"
+            Case "pro"
+                StyleName = "pro...pro* - Special Text - CJK Pronunciation"
+            Case "ps"
+                rCode.Text = "p"
+                CodeReplaced = True
+            Case "psi"
+                rCode.Text = "pi"
+                CodeReplaced = True
+            Case "pub"
+                StyleName = "OBSOLETE pub Peripherals - Front Matter Publication Data"
+            Case "pubinfo"
+                StyleName = "pubinfo - Publication - Information"
+            Case "q3"
+                StyleName = "q3 - Poetry - Indent Level 3"
+            Case "q4"
+                StyleName = "q4 - Poetry - Indent Level 4"
+            Case "qa"
+                StyleName = "qa - Poetry - Acrostic Heading/Marker"
+            Case "qac"
+                StyleName = "qac...qac* - Poetry Text - Acrostic Letter"
+            Case "qc"
+                StyleName = "qc - Poetry - Centered"
+            Case "qm"
+                StyleName = "qm - Poetry - Embedded Text - Indent Level 1 - Single Level Only"
+            Case "qm1"
+                StyleName = "qm1 - Poetry - Embedded Text - Indent Level 1"
+            Case "qm2"
+                StyleName = "qm2 - Poetry - Embedded Text - Indent Level 2"
+            Case "qm3"
+                StyleName = "qm3 - Poetry - Embedded Text - Indent Level 3"
+            Case "qr"
+                StyleName = "qr - Poetry - Right Aligned"
+            Case "qs"
+                StyleName = "qs...qs* - Poetry Text - Selah"
+            Case "qt"
+                StyleName = "qt...qt* - Special Text - Quoted Text - OT in NT"
+            Case "r"
+                StyleName = "r - Heading - Parallel References"
+            Case "rem"
+                StyleName = "rem - File - Remark"
+            Case "restore"
+                StyleName = "restore - File - Restore Information"
+            Case "rq"
+                StyleName = "rq...rq* - Cross Reference - Inline Quotation References"
+            Case "s"
+                StyleName = "s - Heading - Section Level 1"
+            Case "s1"
+                StyleName = "s1 - Heading - Section Level 1"
+            Case "s2"
+                StyleName = "s2 - Heading - Section Level 2"
+            Case "s3"
+                StyleName = "s3 - Heading - Section Level 3"
+            Case "s4"
+                StyleName = "s4 - Heading - Section Level 4"
+            Case "sc"
+                StyleName = "sc...sc* - Character - Small Caps"
+            Case "sig"
+                StyleName = "sig...sig* - Special Text - Author's Signature (Epistles)"
+            Case "sls"
+                StyleName = "sls...sls* - Special Text - Secondary Language or Text Source"
+            Case "sp"
+                StyleName = "sp - Heading - Speaker"
+            Case "spine"
+                StyleName = "OBSOLETE spine Peripherals - Other - Spine"
+            Case "sr"
+                StyleName = "sr - Heading - Section Range References"
+            Case "tc1"
+                StyleName = "tc1 - Table - Column 1 Cell"
+            Case "tc2"
+                StyleName = "tc2 - Table - Column 2 Cell"
+            Case "tc3"
+                StyleName = "tc3 - Table - Column 3 Cell"
+            Case "tc4"
+                StyleName = "tc4 - Table - Column 4 Cell"
+            Case "tcr1"
+                StyleName = "tcr1 - Table - Column 1 Cell - Right Aligned"
+            Case "tcr2"
+                StyleName = "tcr2 - Table - Column 2 Cell - Right Aligned"
+            Case "tcr3"
+                StyleName = "tcr3 - Table - Column 3 Cell - Right Aligned"
+            Case "tcr4"
+                StyleName = "tcr4 - Table - Column 4 Cell - Right Aligned"
+            Case "th1"
+                StyleName = "th1 - Table - Column 1 Heading"
+            Case "th2"
+                StyleName = "th2 - Table - Column 2 Heading"
+            Case "th3"
+                StyleName = "th3 - Table - Column 3 Heading"
+            Case "th4"
+                StyleName = "th4 - Table - Column 4 Heading"
+            Case "thr1"
+                StyleName = "thr1 - Table - Column 1 Heading - Right Aligned"
+            Case "thr2"
+                StyleName = "thr2 - Table - Column 2 Heading - Right Aligned"
+            Case "thr3"
+                StyleName = "thr3 - Table - Column 3 Heading - Right Aligned"
+            Case "thr4"
+                StyleName = "thr4 - Table - Column 4 Heading - Right Aligned"
+            Case "tl"
+                StyleName = "tl...tl* - Special Text - Transliterated Word"
+            Case "toc"
+                StyleName = "OBSOLETE toc Peripherals - Front Matter Table of Contents"
+            Case "toc1"
+                StyleName = "toc1 - File - Long Table of Contents Text"
+            Case "toc2"
+                StyleName = "toc2 - File - Short Table of Contents Text"
+            Case "toc3"
+                StyleName = "toc3 - File - Book Abbreviation"
+            Case "tr"
+                StyleName = "tr - Table - Row"
+            Case "tr1"
+                rCode.Text = "tr"
+                CodeReplaced = True
+            Case "tr2"
+                rCode.Text = "tr"
+                CodeReplaced = True
+            Case "va"
+                StyleName = "va...va* - Verse Number - Alternate"
+            Case "vp"
+                StyleName = "vp...vp* - Verse Number - Publishing Alternate"
+            Case "w"
+                StyleName = "w...w* - Peripheral Ref - Wordlist Entry"
+            Case "wg"
+                StyleName = "wg...wg* - Peripheral Ref - Greek Wordlist Entry"
+            Case "wh"
+                StyleName = "wh...wh* - Peripheral Ref - Hebrew Wordlist Entry"
+            Case "wj"
+                StyleName = "wj...wj* - Special Text - Words of Jesus"
+            Case "wr"
+                StyleName = "OBSOLETE wr...wr* - Auxiliary - Wordlist/Glossary Reference "
+            Case "xk"
+                StyleName = "xk - Cross Reference - Keyword"
+            Case "xo"
+                StyleName = "xo - Cross Reference - Origin Reference"
+            Case "xq"
+                StyleName = "xq - Cross Reference - Quotation"
+            Case "xt"
+                StyleName = "xt - Cross Reference - Target References"
+            Case "xtSee"
+                StyleName = "xtSee - Concordance and Names Index - Alternate Entry Target Reference"
+                CodeType = Char
+            Case "xtSeeAlso"
+                StyleName = "xtSeeAlso - Concordance and Names Index - Additional Entry Target Reference"
+                CodeType = Char
+        End Select
+        
+        If CodeType = Note Then
+            If StarFound Then
+                StartNoteNow = False
+                FinishNoteNow = True
+            Else
+                StartNoteNow = True
+                FinishNoteNow = False
+                NoteCode = rCode.Text
+            End If
+        End If
+        
+        ' If \f<something> or \x<something>, it's a character style,
+        '   not a regular note starter.
+        '
+        If StyleName Like "*Footnote *" _
+        Or StyleName Like "*Cross Reference *" _
+        And rCode.Text <> "rq" Then
+            CodeType = Char
+            InNote = True
+            NoteCharStyle = True
+        End If
+        
+        ' What if there's a footnote formatting code
+        ' without a \f or \fe or \x before it?
+        '
+        If InNote _
+        And Not NoteStarted Then
+            
+            If StyleName Like "f*" Then
+                rSlosh.InsertBefore "\f + " ' and automatic marker
+            End If
+            
+            If StyleName Like "x*" Then
+                rSlosh.InsertBefore "\x + " ' and automatic marker
+            End If
+            
+            Set rNote = rSlosh.Duplicate
+            rNote.End = rEnder.End
+            InNote = True
+            NoteStarted = True
+            
+            rSlosh.End = rSlosh.Start + 1
+            rSlosh.Select
+            GetCode
+            CodeReplaced = True
+        End If
+                
+        If CodeReplaced Then
+            GoTo DecideLessFrequent
+        End If
+        
+    End Select
+    
+    If HeaderVerseWithoutPara Then
+        rSlosh.InsertBefore "\p "
+        rSlosh.End = rSlosh.Start + 1
+        rSlosh.Select
+        GetCode
+        HeaderVerseWithoutPara = False
+        InHeader = False
+        GoTo CheckFrequentCodes
+    End If
+    
+    ' Now to diagnose the type of the field.
+    '
+    If StarFound Then rCode.End = rStar.End
+
+    If StyleName Like "*[*]*" Or rCode.Text Like "*[*]" Then
+        If CodeType <> Note Then CodeType = Char
+    End If
+    
+    If rCode.Text Like "t[ch]*" Then
+        CodeType = Char
+    End If
+    
+    ' If rCode.Text Like "[fx][*]" _
+    ' Or rCode.Text = "fe*" Then
+    '     FinishNoteNow = True
+    ' End If
+
+    If StyleName Like "* Heading *" _
+    Or rCode.Text = "c" Then
+        If rCode.Text Like "th*" Then
+        Else
+            InHeader = True
+        End If
+    Else
+        If CodeType <> Note And CodeType <> Char Then
+            InHeader = False
+        End If
+    End If
+    
+    If StyleName = "" Then CodeType = Unknown
+    
+    ' If note is not terminated,
+    '   do so now.
+    '
+    If InNote Then
+        If Not rCode.Text Like NoteCode & "*" Then
+            rSlosh.InsertBefore "\" & NoteCode & "* " & _
+            "\bdit ! ! Previous note not ended with backslash " & NoteCode & "* ! ! \bdit*"
+            NoteStarted = True
+            InNote = False
+            
+            ' Make sure there isn't a paragraph mark before the \f*
+            '
+            rSlosh.Start = rSlosh.End - 1
+            rSlosh.Select
+            Selection.Collapse
+            
+            If Selection.Start > 0 Then
+                Selection.Start = Selection.Start - 1
+                
+                If Selection.Text = vbCrLf _
+                Or Selection.Text = vbCr _
+                Or Selection.Text = vbLf Then
+                    Selection.Delete
+                End If
+            End If
+            
+            rSlosh.End = rSlosh.Start + 1
+            rSlosh.Select
+            GetCode
+            If StarFound Then rCode.End = rStar.Start
+            GoTo DecideLessFrequent
+        End If
+    End If
+End Function
+Sub DeleteTextFromTemplate()
+'
+' DeleteTextFromTemplate Macro
+' Macro recorded 2/12/2003 by Jim
+'
+    NoAutoThings
+    Selection.EndKey Unit:=wdStory
+    Selection.HomeKey Unit:=wdStory, Extend:=wdExtend
+    Selection.Delete Unit:=wdCharacter, Count:=1
+    Selection.Style = StdParaStyle
+End Sub
+Sub FixCodes()
+    ' Fix \codes such as
+    ' \v3.text --> \v 3 text
+    '
+    Dim Found As Boolean
+    Dim FoundBS As Boolean      ' true if "\" found.
+    Dim IsParaCode As Boolean
+    Dim rParagraphMark As Range
+    Dim StyleType As Integer
+    Dim StyleName As String
+    Dim Result As Integer
+    Dim Slosh As String     ' character to use instead of \ for Wd 2003
+    Dim SloshSet As Boolean
+    Dim BookName As String
+    Dim Language As String
+    Dim rChapter As Range
+    Dim Chapter As String
+    Dim Position As Long
+    
+    Do While VariableGet("FormatVerseNumbers") = ""
+        ' Ask user if she wants to check any chapter numbers etc before we fix the codes
+        '
+        Result = MsgBox( _
+                Title:="SILAS -- Need to check chapter numbers etc.", _
+                Buttons:=vbYesNoCancel, _
+                Prompt:="I'm about to standardize the \ codes in this document." & vbCrLf & vbCrLf & _
+                        "This will join all the lines together, except where codes like " & vbCrLf & _
+                        "\p or \q show where a new paragraph should begin, or " & vbCrLf & _
+                        "\s shows where a section heading should begin." & vbCrLf & vbCrLf & _
+                        "I'm about to put three lines at the beginning of the file as a sample for you. " & vbCrLf & _
+                        "Please edit them so they will be correct for this file. " & vbCrLf & vbCrLf & _
+                        "Then please go through the file and make sure that: " & vbCrLf & _
+                        "each chapter number has \c before it and has \s or \p or similar code after it, " & vbCrLf & _
+                        "each section heading has \s before it and \p or \q or similar code after it " & vbCrLf & _
+                        "and each paragraph has \p or \q or similar code before it. " & vbCrLf & vbCrLf & _
+                        "When you have finished checking the file," & vbCrLf & _
+                        "open the menu called 'USFM to Styles' and choose the item called 'USFM to Styles'." & vbCrLf & _
+                        " " & vbCrLf & _
+                        "If you want to stop this formatting, you can operate the Cancel button. " & vbCrLf & vbCrLf & _
+                        "If you would like me to format the verse numbers with the right codes, do the Yes button, " & vbCrLf & _
+                        "otherwise operate the No button." _
+                )
+       
+        Select Case Result
+            Case vbYes
+                VariableSet "FormatVerseNumbers", "please"
+            Case vbNo
+                VariableSet "FormatVerseNumbers", "no"
+            Case vbCancel
+                VariableSet "FormatVerseNumbers", ""
+                Lib1.EndMacro
+        End Select
+    
+        Selection.HomeKey Unit:=wdStory
+        
+        ' Insert sample ID line etc at the start of the file.
+        '
+        Selection.TypeText Text:="\id BUK Language name [any other comments]"
+        Selection.TypeParagraph
+        Selection.TypeText Text:="\rem BUK represents the book code, such as GEN or MAT or MRK."
+        Selection.TypeParagraph
+        Selection.TypeText Text:="\h Bookname for page headers"
+        Selection.TypeParagraph
+        Selection.TypeText Text:="\mt Main Title"
+        Selection.TypeParagraph
+        
+        Lib1.EndMacro   ' so the user can do these checks and come back
+    Loop
+
+    If ActiveDocument.TrackRevisions = True Then
+        ActiveDocument.TrackRevisions = False
+    End If
+        
+
+    ' Find a character that can replace \
+    ' to work around bug in Wd 2003
+    ' in which something like " (\\p>)" with wildcards turned on doesn't match.
+    '
+    SloshSet = False
+    SetStandardFindOptions
+    
+    With Selection.Find
+        .Forward = True
+        .Wrap = wdFindStop
+        .Format = False
+    End With
+    
+    Do While Not SloshSet
+        Selection.HomeKey Unit:=wdStory
+        Selection.Find.Text = "%"
+        If Selection.Find.Execute = False Then
+            Slosh = "%"
+            Exit Do
+        End If
+        
+        Selection.HomeKey Unit:=wdStory
+        Selection.Find.Text = "#"
+        If Selection.Find.Execute = False Then
+            Slosh = "#"
+            Exit Do
+        End If
+        
+        Selection.HomeKey Unit:=wdStory
+        Selection.Find.Text = "|"
+        If Selection.Find.Execute = False Then
+            Slosh = "|"
+            Exit Do
+        End If
+    
+        MsgBox _
+            Title:="SILAS -- can't standardize SFM data", _
+            Buttons:=vbCritical, _
+            Prompt:="I need to replace the \ characters with something else" & vbCrLf & _
+                    "so I can standardize the \ codes." & vbCrLf & _
+                    "I have tried % and # and $, but your text is using all of these already." & vbCrLf & _
+                    "Please go through the text and replace all occurrences of % with something else," & vbCrLf & _
+                    "and open the USFM to Styles menu and do the job USFM to Styles."
+        Lib1.EndMacro
+    Loop
+    
+    ' Replace \ characters with the contents of Slosh.
+    '
+    With Selection.Find
+        .ClearFormatting
+        .Text = "\"
+        .Replacement.Text = Slosh
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    ActiveWindow.ActivePane.View.Type = wdNormalView
+    FixParagraphMarks
+    SetStandardFindOptions
+    ActiveDocument.ActiveWindow.View.ShowHiddenText = True
+    Selection.HomeKey Unit:=wdStory
+    Application.ScreenUpdating = True
+    
+    Selection.Find.ClearFormatting
+    Selection.Find.Replacement.ClearFormatting
+    
+    ' Replace all tabs with spaces.
+    '
+    With Selection.Find
+        .ClearFormatting
+        .Text = "^t"
+        .Replacement.Text = " "
+        .Forward = True
+        .Wrap = wdFindStop
+        .Format = False
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    Selection.HomeKey Unit:=wdStory
+    SetStandardFindOptions
+    
+    ' All paragraph marks to spaces,
+    ' to make sure the character styles don't break paragraphs.
+    '
+    Selection.Find.ClearFormatting
+    With Selection.Find
+        .Text = "^p"
+        .Replacement.Text = " "
+        .MatchWildcards = False
+        .Wrap = wdFindContinue
+        .Execute Replace:=wdReplaceAll
+    End With
+
+    ' Now reduce multiple spaces.
+    '
+    With Selection.Find
+        ' .Text = " {1,99}"
+        .Text = " {1" & Application.International(wdListSeparator) & "99}"
+
+        .Replacement.Text = " "
+        .MatchWildcards = True
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    Selection.HomeKey Unit:=wdStory
+    
+    ' Now make sure \c and \v codes have spaces before numbers.
+    '
+    With Selection.Find
+        ' \c or \v followed immediately by digit,
+        ' put the code in box 1 and the digit in box 2.
+        .Text = "(" & Slosh & "[cv])([0-9])"
+        ' Put box 1 and box 2 out again, with a space between them.
+        .Replacement.Text = "\1 \2"
+        .MatchWildcards = True
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    Selection.HomeKey Unit:=wdStory
+    
+    ' Now make sure \ca, \va and \vp codes have spaces before numbers.
+    '
+    With Selection.Find
+        ' \va or \vp followed immediately by digit,
+        ' put the code in box 1 and the digit in box 2.
+        .Text = "(" & Slosh & "[cv][ap])([0-9])"
+        ' Put box 1 and box 2 out again, with a space between them.
+        .Replacement.Text = "\1 \2"
+        .MatchWildcards = True
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    Selection.HomeKey Unit:=wdStory
+    
+    ' Now remove any punctuation after the number
+    '
+    With Selection.Find
+        ' Put \c or \v code in box 1, and the number in box 2
+        ' .Text = "(\\[cv]) ([0-9-]{1,9})[.,\!?]"
+        .Text = "(" & Slosh & "[cv]) ([0-9-]{1" & Application.International(wdListSeparator) & "9})[.,\!?]"
+        ' Replace the punctuation with a space
+        .Replacement.Text = "\1 \2 "
+        .MatchWildcards = True
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    Selection.HomeKey Unit:=wdStory
+    
+    ' Now remove any punctuation after the number, even with \ca, \va and \vp.
+    '
+    With Selection.Find
+        ' Put \c or \v code in box 1, and the number in box 2
+        ' .Text = "(\\[cv]) ([0-9-]{1,9})[.,\!?]"
+        .Text = "(" & Slosh & "[cv][ap]) ([0-9-]{1" & Application.International(wdListSeparator) & "9})[.,\!?]"
+        ' Replace the punctuation with a space
+        .Replacement.Text = "\1 \2 "
+        .MatchWildcards = True
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    Selection.HomeKey Unit:=wdStory
+    
+    ' Now make sure there is a space after the number
+    '
+    With Selection.Find
+        ' Put \c or \v code in box 1, and the number in box 2
+        ' and any not-whitespace in box 3.
+        '
+        ' .Text = "(\\[cv]) ([0-9-]{1,99})([! ])"
+        .Text = "(" & Slosh & "[cv]) ([0-9-]{1" & Application.International(wdListSeparator) & "99})([! ])"
+        ' Add a space after the code and number.
+        .Replacement.Text = "\1 \2 \3"
+        .MatchWildcards = True
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    Selection.HomeKey Unit:=wdStory
+    
+    ' Now make sure there is a space after the number, for complex \c and \v
+    '
+    With Selection.Find
+        ' Put \ca or \v[ap] code in box 1, and the number in box 2
+        ' and any not-whitespace in box 3.
+        '
+        ' .Text = "(\\[cv]) ([0-9-]{1,99})([! ])"
+        .Text = "(" & Slosh & "[cv][ap]) ([0-9-]{1" & Application.International(wdListSeparator) & "99})([! ])"
+        ' Add a space after the code and number.
+        .Replacement.Text = "\1 \2 \3"
+        .MatchWildcards = True
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    Selection.HomeKey Unit:=wdStory
+    
+    ' Put a space between punctuation and the next word.
+    '
+    With Selection.Find
+        ' If punctuation followed by beginning of word,
+        '   add a space, provided the next character is not a digit.
+        '
+        .Text = "[.,\!?]<"
+        ' Put a space after the punctuation
+        .Replacement.Text = ""
+        .MatchWildcards = True
+    End With
+    
+    Do While Selection.Find.Execute
+        Selection.Start = Selection.End
+        Selection.End = Selection.End + 1
+        If Not Selection.Text Like "[0-9]" Then Selection.InsertBefore " "
+        Selection.Collapse
+    Loop
+
+    Selection.HomeKey Unit:=wdStory
+    
+    ' Remove space before punctuation.
+    '
+    With Selection.Find
+        .Text = " ([.,\!?])"
+        .Replacement.Text = "\1"
+        .MatchWildcards = True
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+
+    ' Now to normalize the spaces and paragraph marks around codes.
+    ' A paragraph code and its text should have a paragraph mark before the code.
+    ' Character styles should have space or nothing before them.
+    '
+    Selection.Find.ClearFormatting
+    With Selection.Find
+        .Text = " (" & Slosh & "b)>"              ' \b
+        .Replacement.Text = "^13\1"
+        .MatchWildcards = True
+        .Wrap = wdFindContinue
+        .Execute Replace:=wdReplaceAll
+    End With
+
+    With Selection.Find
+        .Text = " (" & Slosh & "c)>"              ' \c
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "c[dlop])"              ' \cd, \cl, \cls, \conc, \cov, \cp
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "d)>"              ' \d
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "[gh])"              ' \glo or \h-anything
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "i[b-np-s])"              ' most of \i-anything
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "io)>"              ' \io
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "io[1-4t])"              ' \io# and \iot
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "k[12])"              ' \k1 or \k2
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "[lm])"              ' \l-anything or \m-anything
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "nb)"              ' \nb
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "p)>"                ' \p
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "p[12bcehimsu])"
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "pr)>"              ' \pr
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "pref)>"              ' \pref
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "q)>"              ' \q
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "q[1-4acmr])>"
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "qm[1-3])>"         ' \qm#
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "r)>"              ' \r
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "re)"              ' \rem and \restore
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "s)>"              ' \s
+        .Replacement.Text = "^13\1"
+        .MatchWildcards = True
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "s[1-4pr])"           ' \s#, \sp, \spine and \sr
+        .MatchWildcards = True
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "t[or])"              ' \toc, \toc#, \tr, \tr#
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    With Selection.Find
+        .Text = " (" & Slosh & "v)>"              ' it's nice for \v to have its own paragraph in USFM.
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    ' Restore \ characters from the contents of Slosh.
+    '
+    SetStandardFindOptions
+    Selection.HomeKey Unit:=wdStory
+    
+    With Selection.Find
+        .ClearFormatting
+        .Text = Slosh
+        .Replacement.Text = "\"
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    ' Now standardize any out-of-date backslash codes.
+    '
+    ' For each \ code,
+    '   GetCode
+    '   CodeType to change the codes
+    '
+    Selection.Find.ClearFormatting
+    With Selection.Find
+        .Text = "\"
+        .Replacement.Text = ""
+        .Forward = True
+        .Wrap = wdFindStop
+        .Format = False
+    End With
+    
+    Do
+        With Selection.Find
+            .Text = "\"
+            .MatchWildcards = False
+            .Wrap = wdFindStop
+        End With
+        
+        FoundBS = False
+        FoundBS = Selection.Find.Execute
+        
+        If FoundBS Then
+            GetCode
+            StyleType = CodeType(StyleName)
+            ' We shouldn't have a paragraph style code within a paragraph,
+            ' so see if we need to make a new paragraph here.
+            '
+            If StyleType = para Then
+                Selection.Start = rSlosh.Start
+                Selection.Collapse
+                If Selection.Start > 0 Then
+                    Selection.Start = Selection.Start - 1
+                    
+                    If Selection.Text <> vbCrLf _
+                    And Selection.Text <> vbCr _
+                    And Selection.Text <> vbLf Then
+                        Selection.Start = rSlosh.Start
+                        Selection.TypeParagraph
+                    End If
+                End If
+
+                Selection.Start = rSlosh.End
+            End If
+            
+            If StyleType = Note Then
+                If rCode.Text Like "*[*]" Then
+                    NoteStarted = False
+                    InNote = False
+                Else
+                    NoteStarted = True
+                    InNote = True
+                End If
+            End If
+        End If
+        
+        Selection.Start = Selection.End
+    Loop While FoundBS
+    
+    ' Now remove any space before a paragraph mark.
+    '
+    Selection.HomeKey Unit:=wdStory
+    
+    With Selection.Find
+        .Text = " ^p"
+        .Replacement.Text = "^p"
+        .MatchWildcards = False
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    ActiveDocument.ActiveWindow.View.ShowHiddenText = False
+    
+    If VariableGet("FormatVerseNumbers") = "please" Then
+        FormatVerseNumbersSFM
+    End If
+    
+    SetStandardFindOptions
+    Selection.HomeKey Unit:=wdStory
+    
+    ' Now to work out a good filename.
+    '
+    BookName = "BUK"
+    Language = "Language"
+    Chapter = "Ch"
+    SetStandardFindOptions
+    
+    With Selection.Find
+        .Forward = True
+        .Wrap = wdFindStop
+        .Format = False
+        .MatchWildcards = False
+        .Text = "\id "
+    End With
+    
+    Found = False
+    Found = Selection.Find.Execute
+    
+    If Found Then
+        Selection.Start = Selection.End
+        
+        If ActiveDocument.Range.End - Selection.End >= 3 Then
+            Selection.End = Selection.End + 4
+            
+            If Selection.Text Like "[1-3a-zA-Z][1-3a-zA-Z][1-3a-zA-Z] " Then
+                BookName = Left(Selection.Text, 3)
+                Selection.Start = Selection.End
+            End If
+        End If
+                
+        ' Now the language name
+        '
+        Selection.EndKey Unit:=wdLine, Extend:=wdExtend
+        Selection.End = Selection.End - 1
+        Position = InStr(Selection.Text, "[")
+        
+        If Position = 0 Then Position = 16
+        
+        Language = Trim(Left(Selection.Text, Position - 1))
+    End If
+    
+    ' Now the first chapter number
+    '
+    Selection.HomeKey Unit:=wdStory
+    With Selection.Find
+        .Text = "\c "
+    End With
+    
+    Found = False
+    Found = Selection.Find.Execute
+    
+    If Found Then
+        Selection.Start = Selection.End
+        Selection.EndKey Unit:=wdLine, Extend:=wdExtend
+        Selection.End = Selection.End - 1
+        Set rChapter = Selection.Range.Duplicate
+        Selection.End = Selection.Start + 1
+
+        Do While rChapter.End - Selection.End >= 1
+            If Not Selection.Text Like "[0-9]" Then
+                Selection.End = Selection.End - 1
+                Exit Do
+            End If
+            
+            Selection.Start = Selection.End
+            Selection.End = Selection.End + 1
+        Loop
+        
+        Selection.Start = rChapter.Start
+        Chapter = Selection.Text
+    End If
+    
+    FileSaveOps.DataDocumentName = _
+        BookName & "-" & Chapter & "-" & Language & "-" & _
+        Format(Now, "yyyy-Mmm-dd") & _
+        "-at-" & Format(Now, "hhmm")
+    
+    Selection.HomeKey Unit:=wdStory
+    ActiveWindow.ActivePane.View.Type = PageOrPrintView
+    MsgBox _
+        Prompt:="I have just standardardized the formatting of your file," & vbCrLf & _
+            "and we can save it as a USFM text document," & vbCrLf & _
+            "so you can load it into Paratext or Translation Editor later." & _
+            vbCrLf & vbCrLf & _
+            "Please choose a suitable folder to put it in." & vbCrLf & _
+            "You can change the file name if you want to.", _
+        Title:="SILAS -- Saving USFM file as 'Plain Text'"
+    
+    F_FileSaveAsEither AsDoc:=False, IsError:=False
+    VariableSet "FixCodes", "done"
+End Sub
+Public Sub FixParagraphMarks()
+    ' Word 2007 and/or Word 2003 can get a file into a state
+    ' where Word treats a number of strings ended by ^13 codes (vbCR)
+    ' as a single paragraph.
+    '
+    ' Make ^13 codes be paragraph breaks
+    '
+    Dim Found As Boolean
+    
+    SetStandardFindOptions
+    Selection.HomeKey Unit:=wdStory
+    
+    With Selection.Find
+        .ClearFormatting
+        ' Using wildcards to match paragraph marks here
+        ' to get around a bug in Word 2003 that doesn't match ^p
+        ' if the text has unicode characters mixed in(?).
+        '
+        .MatchWildcards = True
+        .Text = "^13"
+        .Forward = True
+        .Wrap = wdFindStop
+        .Format = False
+    End With
+    
+    Do
+        Found = Selection.Find.Execute
+    
+        If Found _
+        And Selection.End < ActiveDocument.Range.End Then
+            Selection.TypeParagraph
+'            Selection.MoveRight Unit:=wdCharacter, Count:=1
+        End If
+    Loop While Found
+End Sub
+Sub FixSpaces()
+' Remove spaces adjacent to paragraph marks
+' in the main text and in the footnotes.
+'
+   FixSpacesInternal "footnotes"
+   FixSpacesInternal "endnotes"
+   FixSpacesInternal "main text"
+   Selection.HomeKey Unit:=wdStory
+End Sub
+Sub FixSpacesInternal(Part As String)
+   ' Now change angle brackets to curly quotes.
+   ' Also does em-dashes.
+   '
+Dim MyStoryRange As Range
+Dim Found As Boolean
+
+   SetStandardFindOptions
+   On Error GoTo MissingStoryRange
+
+   Select Case Part
+       Case "footnotes"
+           ActiveDocument.StoryRanges(wdFootnotesStory).Select
+       Case "endnotes"
+           ActiveDocument.StoryRanges(wdEndnotesStory).Select
+       Case "main text"
+           ActiveDocument.StoryRanges(wdMainTextStory).Select
+   End Select
+
+   Set MyStoryRange = Selection.Range
+   Application.StatusBar = "               Fixing space characters --  please wait."
+   Application.ScreenUpdating = False
+
+    Do While Selection.Characters(1) = " "
+        Selection.Characters(1).Delete
+    Loop
+    
+   Selection.Find.ClearFormatting
+   Selection.Find.Replacement.ClearFormatting
+   With Selection.Find
+       .Text = " ^p"
+       .Replacement.Text = "^p"
+       .Forward = True
+       .Wrap = wdFindStop
+       .Format = False
+       .MatchCase = False
+       .Execute Replace:=wdReplaceAll
+   End With
+
+   With Selection.Find
+       .Text = "^p "
+       .Replacement.Text = "^p"
+       .Execute Replace:=wdReplaceAll
+   End With
+
+    ' Now reduce multiple spaces.
+    '
+    Selection.HomeKey Unit:=wdStory
+    
+    With Selection.Find
+        ' .Text = " {1,99}"
+        .Text = " {1" & Application.International(wdListSeparator) & "99}"
+
+        .Replacement.Text = " "
+        .MatchWildcards = True
+        .Execute Replace:=wdReplaceAll
+    End With
+   
+    SetStandardFindOptions
+
+MissingStoryRange:
+End Sub
+Sub FormatFootnotes()
+    Dim n As Long
+    
+    n = 1
+    If ActiveDocument.Footnotes.Count > 0 Then
+        Set rThisPara = ActiveDocument.Footnotes(n).Range.Duplicate
+        ' Remove any trailing spaces
+        '
+        Do While rThisPara.Characters.Last = " "
+            rThisPara.Characters.Last.Delete
+        Loop
+        
+        FormatPara FormatFootnote:=True
+        With ActiveWindow
+            If .Panes.Count > 1 Then .ActivePane.Close
+        End With
+        Selection.HomeKey Unit:=wdStory
+    End If
+        
+    n = 1
+    If ActiveDocument.Endnotes.Count > 0 Then
+        Set rThisPara = ActiveDocument.Endnotes(n).Range.Duplicate
+        ' Remove any trailing spaces
+        '
+        Do While rThisPara.Characters.Last = " "
+            rThisPara.Characters.Last.Delete
+        Loop
+        
+        FormatPara FormatFootnote:=True
+        With ActiveWindow
+            If .Panes.Count > 1 Then .ActivePane.Close
+        End With
+        Selection.HomeKey Unit:=wdStory
+    End If
+End Sub
+Sub FormatPara(FormatFootnote As Boolean)
+    ' Format the paragraph pointed to by rThisPara
+    '
+    ' The paragraphs in the text have FormatFootnote false,
+    ' then when the footnotes are being formatted, it is true.
+    '
+    Dim FoundBS As Boolean
+    Dim FoundSpace As Boolean
+    Dim StyleType As Integer
+    Dim sThisParaStyleName As String
+    Dim StyleName As String
+    Dim sCharStyleToApply As String
+    Dim PreserveCharCode As Boolean
+    
+    sThisParaStyleName = ""
+    rThisPara.Select
+    
+    Do
+        FoundBS = False
+        Selection.Find.ClearFormatting
+        With Selection.Find
+            .Text = "\"
+            .Replacement.Text = ""
+            .Forward = True
+            .MatchWildcards = False
+            .Wrap = wdFindStop
+            .Format = False
+            .MatchWildcards = False
+        End With
+        FoundBS = Selection.Find.Execute
+
+        If FoundBS Then
+            GetCode             ' set pointers to the code
+            StyleType = CodeType(StyleName)
+            
+            If sCharStyleToApply <> "" Then
+                If (InNote And FormatFootnote) _
+                Or InNote = False Then
+                    ApplyCharStyle _
+                        rCharStyle:=rCharStyle, _
+                        sCharStyleToApply:=sCharStyleToApply
+                End If
+            End If
+            
+            If InNote _
+            And StyleType <> Note _
+            And Not NoteCharStyle Then  ' the text doesn't have \f* or equivalent.
+                FinishNoteNow = True
+            End If
+            
+            If FinishNoteNow _
+            And InNote Then
+                If Not NoteStarted Then
+                    Set rNote = Selection.Range.Duplicate
+                    rNote.Start = rSlosh.Start
+                End If
+                
+                rNote.End = rSlosh.Start
+                InNote = False
+                FinishNoteNow = False
+                
+                If FormatFootnote Then
+                    rCode.Start = rSlosh.Start
+                    rCode.End = rStar.End
+                    On Error Resume Next
+                    rCode.Delete
+                    On Error GoTo 0
+                Else
+                    rNote.End = rEnder.Start
+                    AddFootnote
+                    Selection.End = rThisPara.End
+                    GoTo MainLoopEnd
+                End If
+                
+                NoteStarted = False
+            End If
+            
+            If StyleType = para Then
+                If sThisParaStyleName = "" Then
+                    sThisParaStyleName = StyleName
+                    rThisPara.Select
+                    If StyleName <> "" Then
+                        Selection.Start = Selection.End
+                        
+                        ' If the code is invalid, leave it there.
+                        '
+                        On Error GoTo -1: On Error GoTo InvalidStyleName
+                        rThisPara.Style = ActiveDocument.Styles(StyleName)
+                        On Error GoTo 0
+                        rCode.Start = rSlosh.Start
+                        rCode.End = rEnder.End
+                        
+                        If rEnder.Characters(1) = vbCr Then
+                            rCode.End = rEnder.Start
+                            FoundBS = False
+                        End If
+                        
+                        rCode.Delete
+                        GoTo StyleNameOK
+InvalidStyleName:
+                        On Error GoTo 0
+                        MsgBox Buttons:=vbInformation, _
+                            Title:="Silas: Bad stylename", _
+                            Prompt:="I tried to convert \" & rCode.Text & _
+                                " into the style" & vbCr & _
+                                vbTab & "'" & StyleName & "'," & vbCr & _
+                                "but that failed." & vbCr & vbCr & _
+                                "Perhaps the stylename is spelled wrongly in " & _
+                                "'Silas.dot'" & vbCr & _
+                                "I suggest you reinstall SILAS."
+
+StyleNameOK:
+                    End If
+                Else    ' sThisParaStyleName has been set already.
+                    ' We shouldn't have a paragraph style code within a paragraph,
+                    ' so make a new paragraph here.
+                    '
+                    Selection.Start = rSlosh.Start
+                    Selection.Collapse
+                    If Selection.Start > 0 Then Selection.Start = Selection.Start - 1
+                    
+                    ' If Selection.Text = vbCrLf Then MsgBox "crlf"
+                    ' If Selection.Text = vbCr Then MsgBox "cr"
+                    ' If Selection.Text = vbLf Then MsgBox "lf"
+    
+                    ' If Selection.Text <> vbCrLf _
+                    ' And Selection.Text <> vbCr _
+                    ' And Selection.Text <> vbLf Then
+                        rSlosh.InsertBefore vbCrLf
+                        sThisParaStyleName = ""
+                        rThisPara.Start = rSlosh.Start
+                        Exit Sub
+                    ' End If
+                End If
+            End If
+            
+            If StyleType = Char Then
+                If InNote Then
+                    If FormatFootnote Then
+                        If sCharStyleToApply <> "" Then
+                            ApplyCharStyle _
+                                rCharStyle:=rCharStyle, _
+                                sCharStyleToApply:=sCharStyleToApply
+                        End If
+                        
+                        PreserveCharCode = False
+                    Else    ' just leave the codes there for formatting in the footnote
+                        PreserveCharCode = True
+                    End If
+                End If
+                
+                Set rCharStyle = rEnder.Duplicate
+                rCharStyle.Start = rEnder.End
+                Selection.Start = rEnder.End
+                
+                ' If this is \v or (or something else with no ending code),
+                '   set the Char style range appropriately.
+                '
+                If rCode = "v" Then
+                    Selection.End = rThisPara.End
+                    Selection.Find.ClearFormatting
+                    With Selection.Find
+                        .Text = " "
+                        .Replacement.Text = ""
+                        .Forward = True
+                        .MatchWildcards = False
+                        .Wrap = wdFindStop
+                        .Format = False
+                    End With
+                    FoundSpace = False
+                    FoundSpace = Selection.Find.Execute
+                    
+                    If FoundSpace Then
+                        rCharStyle.End = Selection.End
+                    Else
+                        rCharStyle.End = rEnder.End + 2
+                    End If
+                End If
+                
+                rCode.Start = rSlosh.Start
+                
+                If StarFound Then
+                    sCharStyleToApply = ""
+                    rCode.End = rStar.End
+                    
+                    'Don't allow the function to run beyond the end of the paragraph
+                    '
+                    If rEnder.End = rThisPara.End Then FoundBS = False
+                Else
+                    rCode.End = rEnder.End
+                    sCharStyleToApply = StyleName
+                End If
+                
+                Selection.Start = rEnder.End
+                Selection.End = rThisPara.End
+                
+                If PreserveCharCode Then
+                    PreserveCharCode = False
+                Else
+                    rCode.Delete
+                End If
+            End If
+            
+            If StyleType = Note _
+            And FinishNoteNow = False Then
+                Set rNote = rSlosh.Duplicate
+                rNote.End = rEnder.End
+                InNote = True
+                NoteStarted = True
+                
+                If FormatFootnote Then
+                    rThisPara.Select
+                    If StyleName <> "" Then
+                        Selection.Start = Selection.End
+                        
+                        ' If the code is invalid, leave it there.
+                        '
+                        On Error GoTo -1: On Error Resume Next
+                        rThisPara.Style = ActiveDocument.Styles(StyleName)
+                        On Error GoTo 0
+                        rCode.Start = rSlosh.Start
+                        rCode.End = rEnder.End
+                        On Error GoTo -1: On Error Resume Next
+                        rCode.Delete
+                        On Error GoTo 0
+                    End If
+                End If
+            End If
+            
+            If StyleType = Unknown Then
+                rThisPara.Start = rEnder.End
+            End If
+            
+            Selection.Start = rEnder.End
+            Selection.End = rThisPara.End
+        Else            ' Here at the end of the paragraph
+            If sCharStyleToApply <> "" Then
+                If (InNote And FormatFootnote) _
+                Or InNote = False Then
+                    ' Slosh not found,
+                    '   so the selection might be the final part of the paragraph
+                    '   and the Char style still needs to be applied.
+                    '   But not to the paragraph mark.
+                    '
+                    If rCharStyle.End = rCharStyle.Start Then
+                        rCharStyle.End = rThisPara.End - 1
+                    End If
+                    
+                    ApplyCharStyle _
+                        rCharStyle:=rCharStyle, _
+                        sCharStyleToApply:=sCharStyleToApply
+                End If
+            End If
+            
+            If InNote Then  ' the user left out the \f* or equivalent
+                If FormatFootnote = False Then
+                    rNote.End = rThisPara.End
+                    AddFootnote
+                    
+                    ' Step on to the next paragraph.
+                    '
+                    If ActiveDocument.Range.End - Selection.End > 1 Then
+                        Selection.Start = Selection.End + 1
+                    End If
+                End If
+            End If
+            
+            Set rCharStyle = Nothing
+            Selection.Start = rThisPara.End
+        End If
+MainLoopEnd:
+    ' If Selection.Start = rThisPara.End Then
+      '   Selection.Start = Selection.End - 1
+    ' End If
+    
+    Loop While FoundBS
+   
+    sThisParaStyleName = ""
+    Set rThisPara = Nothing
+End Sub
+Sub FormatVerseNumbersSFM()
+    Dim Result As Integer
+    Dim rThisNum As Range
+    
+    Dim VerseNum As Integer
+    Dim VerseEnd As Integer
+    Dim VerseNext As Integer
+    Dim SplitPoint As Long
+    
+    Dim FoundNum As Boolean
+    Dim FoundSlosh As Boolean
+    Dim InText As Boolean   ' off while in intro etc
+    Dim NumMayBeVerseNum As Boolean    ' off in footnotes etc
+    Dim IsVerseNumber As Boolean
+    
+    Result = MsgBox( _
+            Title:="SILAS -- Formatting numbers as verse numbers", _
+            Buttons:=vbOKCancel, _
+            Prompt:="All numbers in the document will be formatted as verse numbers, " & vbCrLf & _
+                "except those with a 'Chapter' or 'Reference' style applied." & _
+                "Are you sure all your chapter numbers and reference lines have the proper code before them?" & vbCrLf & vbCrLf & _
+                "If you want to format numbers as verse numbers, click OK," & vbCrLf & _
+                "otherwise click Cancel" _
+            )
+            
+    If Result = vbCancel Then Exit Sub
+
+    Gen.DisableSmartCutAndPaste "disable"   ' and remember user's preference
+    SetStandardFindOptions
+    Selection.HomeKey Unit:=wdStory
+    ActiveWindow.ActivePane.View.Type = wdNormalView
+    
+    ' set VerseNum = VerseEnd = 0
+    ' set VerseNext = 1
+    ' Search the file for numbers, with "[0-9:,.;-]" pattern
+    ' For each one
+    '   if hit contains [0-9][:;.,][0-9] or doesn't contain [0-9]
+    '      step to end of selection & continue search
+    '   else
+    '      set rThisNum to selection
+    '      search up for \ & GetCode
+    '         if \c or \ca,
+    '            set VerseNum to 0
+    '            goto NumProcDone
+    '         if code is something that can't contain verses,
+    '            select rThisNum again
+    '            goto NextSearch
+    '      select rThisNum again
+    '      if selection contains "-",
+    '         VerseNum = first number
+    '         VerseEnd = second numberr
+    '      if VerseNum = VerseNext
+    '         make sure it has \v before it,
+    '         if VerseEnd > 0 then VerseNum = VerseEnd
+    '      else
+    '         ask user if this number is the next verse number.
+    '         if so,
+    '            make sure it has \v before it,
+    '            if VerseEnd > 0 then VerseNum = VerseEnd
+    ' NumProcDone:
+    '   select rThisNum again
+    '   step to end of selection
+    '   VerseEnd = 0
+    '   VerseNext = VerseNum + 1
+    ' NextSearch:
+    '   loop to find next number
+    
+    VerseNext = 1
+    
+    Do
+        Selection.Find.ClearFormatting
+        With Selection.Find
+            ' .Text = "[0-9;:,.-]{1,}"
+            .Text = "[0-9;:,.-]{1" & Application.International(wdListSeparator) & "}"
+            .Replacement.Text = ""
+            .Forward = True
+            .MatchWildcards = True
+            .Wrap = wdFindStop
+            .Format = False
+        End With
+        
+        FoundNum = False
+        FoundNum = Selection.Find.Execute
+        
+        If FoundNum <> True Then Exit Do
+        
+        Set rThisNum = Selection.Range.Duplicate
+        If Selection.Text Like "*[0-9][:;,.][0-9]*" Then GoTo NextSearch
+        If Not Selection.Text Like "*[0-9]*" Then GoTo NextSearch
+
+        Selection.Collapse
+        
+        With Selection.Find
+            .Text = "\"
+            .Replacement.Text = ""
+            .Forward = False
+            .MatchWildcards = False
+            .Wrap = wdFindStop
+            .Format = False
+        End With
+        
+        FoundSlosh = False
+        FoundSlosh = Selection.Find.Execute
+        
+        If FoundSlosh Then
+            IsVerseNumber = False
+            NumMayBeVerseNum = False
+            GetCode             ' set pointers to the code
+            
+            If rCode.Text = "c" Or rCode.Text = "ca" Then
+                VerseNum = 0
+                InText = True
+                GoTo NumProcDone
+            End If
+            
+            If rCode.Text = "v" Then
+                If rThisNum.Start - rCode.End = 1 Then
+                    IsVerseNumber = True
+                Else
+                    NumMayBeVerseNum = True
+                End If
+                GoTo MayBeVerseNumber
+            End If
+            
+            If StarFound Then
+                If InText Then NumMayBeVerseNum = True
+            Else
+                If rCode.Text Like "b*" _
+                Or rCode.Text Like "[fxz]*" _
+                Or rCode.Text = "iex" _
+                Or rCode.Text = "it" _
+                Or rCode.Text Like "[ikrvw]*" _
+                Or rCode.Text Like "n[do]*" _
+                Or rCode.Text Like "p[nr]*" _
+                Or rCode.Text = "sc" _
+                Or rCode.Text = "sig" _
+                Or rCode.Text = "sls" _
+                Or rCode.Text = "sts" _
+                Or rCode.Text = "ord" Then
+                    GoTo NextSearch
+                End If
+            End If
+            
+            If rCode.Text Like "[ih]*" _
+            Or rCode.Text Like "m[rst]*" _
+            Or rCode.Text Like "s[pr]" _
+            Or rCode.Text Like "toc*" Then
+                InText = False
+                GoTo NumProcDone
+            End If
+            
+            If rCode.Text Like "t[ch]*" Then
+                NumMayBeVerseNum = True
+            ElseIf rCode.Text = "nb" _
+            Or rCode.Text = "p" Then
+                InText = True
+                NumMayBeVerseNum = True
+            Else
+                If rCode.Text Like "[lpqs]*" Then
+                    InText = True
+                    NumMayBeVerseNum = True
+                End If
+            End If
+        End If
+        
+MayBeVerseNumber:
+        rThisNum.Select
+        
+        If Selection.Text Like "[.,:,]*" Then
+            Do While Selection.Text Like "[.,:,]*"
+                Selection.Start = Selection.Start + 1
+            Loop
+
+            Selection.InsertBefore " "
+            Selection.Start = Selection.Start + 1
+        End If
+
+        Do While Selection.Characters(Selection.Characters.Count) Like "[.,:,]"
+            Selection.End = Selection.End - 1
+        Loop
+
+        If Selection.Text Like "*[0-9]-[0-9]*" Then
+            SplitPoint = InStr(Selection.Text, "-")
+            
+            If SplitPoint > 0 Then
+                VerseNum = CInt(Left(Selection.Text, SplitPoint - 1))
+                VerseEnd = CInt(Right(Selection.Text, Len(Selection.Text) - SplitPoint))
+            End If
+        Else
+            SplitPoint = 0
+            VerseNum = CInt(Selection.Text)
+        End If
+
+        ' The highest verse number in OT, NT and DC is in Psalm 119, verse 176,
+        ' so if the number is bigger than that, we can skip on.
+        '
+        If VerseNum > 176 Then GoTo NextSearch
+        
+        If IsVerseNumber Then
+            If SplitPoint > 0 Then
+                VerseNum = VerseEnd
+            End If
+        Else
+            If NumMayBeVerseNum Then
+                ' If the number we found ends where the code ends
+                ' and is included within the code range,
+                '   then it must be part of the code,
+                '   so we'll skip over it.
+                '
+                If rThisNum.End <= rCode.End _
+                And rThisNum.Start < rCode.End Then GoTo NextSearch
+                
+                If VerseNum = VerseNext Then
+                    MakeNumberAVerseNumber
+                Else
+                    Result = MsgBox( _
+                            Title:="SILAS -- Format this number as a verse number?", _
+                            Buttons:=vbYesNoCancel, _
+                            Prompt:="This number, '" & Selection.Text & "' is not in verse sequence." & vbCrLf & vbCrLf & _
+                                "Do you want me to format it as a verse number?" _
+                            )
+                    Select Case Result
+                        Case vbCancel
+                            Lib1.EndMacro
+                        Case vbNo
+                            GoTo NextSearch
+                        Case vbYes
+                            MakeNumberAVerseNumber
+                    End Select
+                End If
+                
+                If SplitPoint > 0 Then
+                    VerseNum = VerseEnd
+                End If
+            End If
+        End If
+        ' fallthrough
+NumProcDone:
+        rThisNum.Select
+        VerseEnd = 0
+        VerseNext = VerseNum + 1
+NextSearch:
+        rThisNum.Select
+        Selection.Start = Selection.End
+    Loop
+    
+    VariableSet "FormatVerseNumbers", "done"
+    Gen.DisableSmartCutAndPaste         ' restore user's preference
+    SetDefaultView
+    SetStandardFindOptions
+End Sub
+Sub GetCode()
+    ' Called with \ selected
+    ' Sets pointers to the parts of the code.
+    '
+    ' if code ends with *, as in \f*,
+    '    rStar points to the star & rCode includes the star.
+    '
+    Dim EnderFound As Boolean
+    Dim n As Long
+    
+    EnderFound = False
+    StarFound = False
+    SetStandardFindOptions
+    Set rSlosh = Selection.Range.Duplicate
+    
+    ' look for the character(s) that end the code
+    '
+    ' Sorry, sometimes wildcard searching doesn't work here in Wd 2003
+    ' when running from the beginning of USFM2Styles.
+    '
+    ' Wanting to do .Text = "[* ^13]{1,}"
+    '
+    Set rEnder = Selection.Range.Duplicate
+
+    Do
+        Selection.Start = Selection.End
+        Selection.End = Selection.End + 1
+        
+        ' If we have something like \s\nd ...
+        '   then make the \s end properly.
+        '
+        If Selection.Text = "\" Then
+            Selection.InsertBefore " "
+            Selection.End = Selection.Start + 1     ' ending space is now selected.
+        End If
+        
+        ' Now look for the ender.
+        '
+        If Selection.Text = "*" Then
+            StarFound = True
+            Set rStar = Selection.Range.Duplicate
+            rEnder.Start = Selection.End ' leave the star out of the ender
+            EnderFound = True
+        Else
+            If Selection.Text = " " _
+            Or Selection.Text = vbCr Then
+                If Not EnderFound Then
+                    rEnder.Start = Selection.Start
+'                    rEnder.End = Selection.End
+                End If
+                EnderFound = True
+            End If
+        End If
+        
+        If EnderFound Then Exit Do
+    Loop While Selection.StoryLength - Selection.End > 1
+    
+    If EnderFound Then
+        rEnder.End = Selection.End
+    Else
+        rEnder.End = ActiveDocument.Range.End
+        rEnder.Start = rEnder.End - 1
+    End If
+
+    GoTo SkipFind
+    
+    With Selection.Find
+        ' .Text = "[* ^13]{1,}"
+        ' .Text = "[^13* ]{1" & Application.International(wdListSeparator) & "}"
+        .Text = "[!a-zA-Z1-9*]{" & Application.International(wdListSeparator) & "}"
+        .MatchWildcards = True
+        .Wrap = wdFindStop
+        .Forward = True
+    End With
+    
+    EnderFound = Selection.Find.Execute
+    
+    If EnderFound Then
+        Set rEnder = Selection.Range.Duplicate
+        
+        If Selection.Characters(1) = "*" Then
+            StarFound = True
+            Set rStar = Selection.Range.Duplicate
+            rStar.End = rStar.Start + 1
+            rEnder.Start = rEnder.Start + 1 ' remove the star from the ender
+        End If
+    Else
+        Set rEnder = Selection.Range.Duplicate
+        rEnder.End = ActiveDocument.Range.End
+        rEnder.Start = ActiveDocument.Range.End
+    End If
+    
+SkipFind:
+    Set rCode = Selection.Range.Duplicate
+    rCode.End = rEnder.Start
+    rCode.Start = rSlosh.End
+    rCode.Select
+    
+    Selection.Find.Forward = True
+End Sub
+Sub MakeNumberAVerseNumber()
+    ' Call with verse number selected.
+    '
+    Selection.InsertBefore "\v "    ' We know there's no code there yet.
+    
+    ' Make sure text after verse number is appropriate.
+    '
+    Selection.Start = Selection.End - 1
+    
+    If Selection.Text Like "[0-9]" Then Selection.End = Selection.End + 1
+    
+    Do
+        Selection.Start = Selection.End - 1
+        
+        If Selection.Text Like "[.,\!?)]" Then
+            Selection.Text = " "
+            Selection.End = Selection.End - 1
+            Exit Do
+        Else
+            Selection.End = Selection.End - 1
+            Exit Do
+        End If
+    Loop
+
+    ' Remove multiple spaces after number.
+    '
+    Selection.Start = Selection.End
+    
+    Do While ActiveDocument.Range.End - Selection.End > 2
+        Selection.End = Selection.Start + 2
+        
+        If Selection.Text = "  " Then
+            Selection.Text = " "
+        ElseIf Selection.Characters(1) <> " " Then
+            Selection.InsertBefore " "
+        Else
+            Exit Do
+        End If
+    Loop
+End Sub
+Sub NoAutoThings()
+    NoAutoStyles
+
+    If Val(Application.Version) >= WdXP Then
+        NoAutoCanvas
+        NoAutoCorrectAdvanced
+    End If
+    With AutoCorrect
+        .CorrectDays = False
+        .CorrectCapsLock = False
+        .ReplaceText = False
+    End With
+    With Options
+        .AutoFormatAsYouTypeApplyHeadings = False
+        .AutoFormatAsYouTypeApplyBorders = False
+        .AutoFormatAsYouTypeApplyBulletedLists = False
+        .AutoFormatAsYouTypeApplyNumberedLists = False
+        .AutoFormatAsYouTypeApplyTables = False
+        .AutoFormatAsYouTypeReplaceQuotes = False
+        .AutoFormatAsYouTypeReplaceSymbols = False
+        .AutoFormatAsYouTypeReplaceOrdinals = False
+        .AutoFormatAsYouTypeReplaceFractions = False
+        .AutoFormatAsYouTypeReplacePlainTextEmphasis = False
+        .AutoFormatAsYouTypeReplaceHyperlinks = False
+        .CheckSpellingAsYouType = False
+        .CheckGrammarAsYouType = False
+    End With
+End Sub
+Sub USFM2Styles()
+    '
+    ' USFM2Styles Macro -- Convert \codes to styles in the current document.
+    ' Macro created 10 Oct 2007 by Jim Henderson
+    '
+    ' Normalize codes, if not done already.
+    ' Merge verses into paragraphs
+    ' For each paragraph,
+    '   apply the paragraph style
+    '   for each character code
+    '       apply the char style.
+    '   for each \x or \f etc,
+    '       make the footnote with the \codes inside
+    ' For each footnote,
+    '   apply the paragraph style and the character styles
+    '
+    
+    Dim ParaStart As Long
+    Dim PrevStyle As String
+    Dim CodeNormal As Boolean
+    Dim AddSpace As Boolean
+    Dim rngCode As Range
+    Dim rngWhites As Range
+    Dim rngContents As Range
+    Dim rngChar As Range
+    Dim ThisStyleName As String
+    Dim rFootnotePosition As Range
+    Dim sFootnoteText As String
+    Dim sFootnoteStyle As String
+    Dim sFootnotePreviousStyle As String
+    Dim sFootnoteTerminator As String
+    Dim FootnoteNotEnded As Boolean
+    Dim sReference As String
+    Dim EndOfCharacterStyleRange As Boolean
+    Dim Found As Boolean
+    Dim InSectionHead As Boolean
+    Dim FoundBS As Boolean
+    
+    ParaStart = 0
+    NoAutoThings
+    DisableSmartCutAndPaste "disable"
+
+    If VariableGet("FixCodes") <> "done" Then FixCodes
+
+    FixParagraphMarks
+    SetStandardFindOptions
+    ActiveDocument.ActiveWindow.View.ShowHiddenText = True
+    ActiveWindow.ActivePane.View.Type = wdNormalView
+    Selection.HomeKey Unit:=wdStory
+    Application.ScreenUpdating = True
+    
+    
+    ' Remove any spaces before paragraph marks
+    '
+    With Selection.Find
+        .ClearFormatting
+        ' Using wildcards to match paragraph marks here
+        ' to get around a bug in Word 2003 that doesn't match ^p
+        ' if the text has unicode characters mixed in (?).
+        '
+        .MatchWildcards = True
+        .Text = " ^13"
+        .Replacement.Text = "^13"
+        .Forward = True
+        .Wrap = wdFindStop
+        .Format = False
+    End With
+    Selection.Find.Execute Replace:=wdReplaceAll
+    
+    ' For each verse code,
+    '   change the paragraph mark before it to a space.
+    '
+    With Selection.Find
+        .Text = "^13\\v "
+        .Replacement.Text = " ^92v "
+    End With
+    Selection.Find.Execute Replace:=wdReplaceAll
+    
+    Selection.HomeKey Unit:=wdStory
+    
+    ' For each paragraph
+    '
+    Do While ActiveDocument.Range.End - Selection.End > 1
+        Selection.Paragraphs(1).Range.Select
+        Set rThisPara = Selection.Range.Duplicate
+        
+        ' If this paragraph is in a table like this:
+        ' +-----+-----+-------------+
+        ' |     |     |             |
+        ' |     |     |             |
+        ' +-----+-----+             +
+        ' |     |     |             |
+        ' |     |     |             |
+        ' +-----+-----+-------------+
+        ' then this loop can go on forever,
+        '   so escape from it.
+        '
+        If rThisPara.Start < ParaStart Then
+            ' we must have stepped back earlier, perhaps in a table like that.
+            '
+            Selection.Collapse
+            FoundBS = False
+            Selection.Find.ClearFormatting
+            With Selection.Find
+                .Text = "\"
+                .Replacement.Text = ""
+                .Forward = True
+                .MatchWildcards = False
+                .Wrap = wdFindStop
+                .Format = False
+                .MatchWildcards = False
+            End With
+            FoundBS = Selection.Find.Execute
+
+            If Not FoundBS Then
+                Exit Do
+            Else
+                Selection.Paragraphs(1).Range.Select
+                Set rThisPara = Selection.Range.Duplicate
+            End If
+        End If
+        
+        ParaStart = rThisPara.Start
+        InNote = False
+        FormatPara FormatFootnote:=False
+    Loop
+
+FormatFootnotesNow:
+
+    FormatFootnotes
+    
+    ' Now remove spaces before or after paragraph marks, & multiple spaces.
+    '
+    SetStandardFindOptions
+    FixSpaces
+    
+    ' Now convert any |l codes into manual line breaks
+    '
+    Selection.HomeKey Unit:=wdStory
+    SetStandardFindOptions
+    
+    With Selection.Find
+        .ClearFormatting
+        .Text = "|l"
+        .Replacement.Text = "^l"
+        .Forward = True
+        .Wrap = wdFindStop
+        .Format = False
+    End With
+    Selection.Find.Execute Replace:=wdReplaceAll
+    
+    Selection.HomeKey Unit:=wdStory
+    SetStandardFindOptions
+    ActiveWindow.ActivePane.View.Type = PageOrPrintView
+    VariableSet "USFM2Styles", "done"
+    
+    ' Now to do the language formatting.
+    '
+    If VariableGet("USFM2Styles") <> "needed" Then
+        LangData.LoadLanguageData
+        Gen.SetDefaultPaperSize
+    End If
+    
+    F_FileSaveAsEither AsDoc:=True, IsError:=False
+    SetStandardFindOptions
+    DisableSmartCutAndPaste
+End Sub

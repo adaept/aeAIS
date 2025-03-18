@@ -1,0 +1,44 @@
+Attribute VB_Name = "Strings"
+Option Explicit
+DefStr S
+Public Const strMakeCoverDoc_PrematureTitle = _
+    "Silas Error: Not formatted for Booklet printing yet "
+Public Const strMakeCoverDoc_PrematurePrompt = _
+    "Sorry, you need to make a title page" & vbCr & _
+    " before you can make it into a cover document." & vbCr & vbCr & _
+    "Please open the Scripture menu and do the task:" & vbCr & _
+    vbTab & "2. Format For Half-Page Booklets" & vbCr & _
+    "and then run me again."
+Public Const strMakeCoverDoc_NoPageBreakTitle = _
+    "Silas Error: No page break found "
+Public Const strMakeCoverDoc_NoPageBreakPrompt = _
+    "Oh dear, I couldn't find a page break in your document," & vbCr & _
+    "so I don't know where the title page ends." & vbCr & vbCr & _
+    "You could do Insert->Break->page where the title page ends, " & vbCr & _
+    "and run me again."
+Public Const strMakeCover_SaveAsFailedTitle = _
+    "Silas Error: Save error"
+Public Const strMakeCover_SaveAsFailedPrompt_1 = _
+    "Sorry, I couldn't save your cover document." & vbCr & _
+    "The error message is: "
+Public Const strMakeCover_SaveAsFailedPrompt_2 = _
+    "See if you can work out how to save it somewhere."
+
+Public Const strShowBookletMacrosDoc_Title = _
+    "Silas Error: Can't open 'Print Booklets' instructions file "
+Public Const strShowBookletMacrosDoc_Prompt_1 = _
+    "Sorry, I couldn't open the 'Print Booklets' document." & vbCr & _
+    "I'm looking for the file:" & vbCr
+Public Const strShowBookletMacrosDoc_Prompt_2 = _
+    vbCr & "The error message is: "
+
+Public Const strSpaces = "                      "
+Public Const strGeneralReinstall = _
+    "Please locate the file 'Silas-v" & GenSilasVersion & "-" & GenSilasBuild & _
+    "-Setup.exe" & "'," & vbCrLf & _
+    "then close all Word windows and run that file to install this template properly." & vbCr & _
+    "Please ask for technical help if you need it."
+
+
+
+

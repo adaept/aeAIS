@@ -1,0 +1,439 @@
+Attribute VB_Name = "FileSaveOps"
+' Module for saving with suggested names
+'
+Dim WorkingFolderUserPreference As String
+Public DataDocumentName As String
+Public DataDocumentNameRsv As String
+Public ErrorReportName As String
+
+Option Explicit
+Sub F_FileSaveAs()
+    '
+    ' FileSaveAs Macro
+    ' Saves a copy of the document in a separate file
+    '
+    ' Modified to suggest the file name, date and time.
+    '
+    Dim dlg As Dialog
+    Dim FileName As String
+    Dim tmpFileName As String
+    Dim Found As Boolean
+    Dim HeadWord As String
+    Dim Result As Long
+    Dim CharPosition As Long
+    Dim DataDocument As String
+    
+    ActiveDocument.Fields.Update
+    
+    ' Set folder for Save As to the current directory
+    '
+    SetWorkingFolder SetFolder:=True
+    
+    ' Suggest filename made from
+    '   Project or language name from title page dialog
+    '   Scripture in this publication from same dialog
+    '   current date and time
+    '
+    F_FindLanguageOrProjectName FileName
+    
+    FileName = FileName & ", " & VariableGet("ScripturePassage") & " "
+    
+    ' Trim and abbreviate unnecessary words from Pt full name of project
+    '
+    FixFileName FileName, " Project", "P"
+    FixFileName FileName, " New Testament", " NT"
+    FixFileName FileName, " Old Testament", " OT"
+    FixFileName FileName, " Front Translation", " FT"
+    FixFileName FileName, " Backtranslation", " BT"
+    FixFileName FileName, " Back Translation", " BT"
+    FixFileName FileName, " Back-Translation", " BT"
+    FixFileName FileName, " Translation", " T"
+    FixFileName FileName, " Back", " B"
+    
+    FileName = FileName & " " & Format(Now, "yyyy-Mmm-dd") & _
+                " at " & Format(Now, "hhmm")
+    
+    ' Make sure there aren't any illegal characters such as colons
+    ' in the proposed filename.
+    '
+    FixFileName FileName, ":", ","
+    FixFileName FileName, "/", "-"
+    FixFileName FileName, "\", ""
+    FixFileName FileName, "|", ""
+    FixFileName FileName, Chr(34), "'"
+
+    ' Now to display the FileSaveAs dialog
+    ' and let the user change the name.
+    '
+    Set dlg = Dialogs(wdDialogFileSaveAs)
+
+    With dlg
+        .Name = FileName
+        
+        ' change to Doc instead of RTF, so pictures will be packed smaller
+        '
+        .Format = wdFormatDocument
+        
+        Result = .Show
+        
+        If Result <> 0 Then
+            DataDocument = .Name
+        
+            ' Trim quotes put in by the dialog
+            '
+            Do
+                CharPosition = InStr(1, DataDocument, Chr(34), vbBinaryCompare)
+                
+                If CharPosition > 0 Then
+                    DataDocument = Mid(DataDocument, 1, CharPosition - 1) & _
+                        Mid(DataDocument, CharPosition + 1)
+                End If
+            Loop While CharPosition > 0
+        End If
+    End With
+
+    SetWorkingFolder SetFolder:=False   ' restore to previous working folder
+End Sub
+Sub F_FileSaveAsEither(AsDoc As Boolean, IsError As Boolean)
+    '
+    ' FileSaveAsText Macro
+    ' Saves a copy of the document in a separate file
+    '
+    ' Modified to save as plain text
+    '
+    Dim dlg As Dialog
+    Dim FileName As String
+    Dim tmpFileName As String
+    Dim Found As Boolean
+    Dim HeadWord As String
+    Dim Result As Long
+    Dim CharPosition As Long
+    Dim IsUnicode As Boolean
+    
+    ActiveDocument.Fields.Update
+    
+    ' See if there are any characters above the ANSI range.
+    '
+    If Not AsDoc Then
+        SetStandardFindOptions
+        Selection.Find.ClearFormatting
+        With Selection.Find
+            .Text = "[!^2-ÿ]"
+            .Replacement.Text = ""
+            .Forward = True
+            .Wrap = wdFindContinue
+            .Format = False
+            .MatchWildcards = True
+        End With
+        Selection.Find.Execute
+        
+        If Selection.Find.Found = True Then
+            IsUnicode = True
+        Else
+            IsUnicode = False
+        End If
+    End If
+    
+    ' Set folder for Save As to the current directory
+    
+    SetWorkingFolder SetFolder:=True
+    
+    If IsError Then
+        DataDocumentNameRsv = DataDocumentName
+        DataDocumentName = ErrorReportName & " problem " & Format(Now, "yyyy-Mmm-dd") & _
+                    " at " & Format(Now, "hhmm")
+    End If
+    
+    If DataDocumentName = "" Then
+        ' Suggest filename made from
+        '   BUKlangCh
+        '   current date and time
+        '
+        FileName = "BUKlangCh"
+        
+        FileName = FileName & " " & Format(Now, "yyyy-Mmm-dd") & _
+                    " at " & Format(Now, "hhmm")
+    Else
+        FileName = DataDocumentName
+    End If
+
+    ' Make sure there aren't any illegal characters such as colons
+    ' in the proposed filename.
+    '
+    FixFileName FileName, ":", ","
+    FixFileName FileName, "/", "-"
+    FixFileName FileName, "\", ""
+    FixFileName FileName, "|", ""
+    FixFileName FileName, Chr(34), "'"
+
+    ' Now to display the FileSaveAs dialog
+    ' and let the user change the name.
+    '
+    Set dlg = Dialogs(wdDialogFileSaveAs)
+
+    With dlg
+        .Name = FileName
+        
+        ' Save as plain text
+        '
+        If AsDoc Then
+            .Format = wdFormatDocument
+        Else
+            .Format = wdFormatText
+            
+            If Val(Application.Version) >= WdXP Then
+                .AllowSubstitutions = False
+            End If
+            
+            If IsUnicode Then
+                .Format = wdFormatUnicodeText
+                
+                If Val(Application.Version) >= WdXP Then
+                    .Encoding = 65001
+               End If
+            End If
+        End If
+    
+        Result = .Show
+        
+        If Result <> 0 Then
+            DataDocumentName = .Name
+        
+            ' Trim quotes put in by the dialog
+            '
+            Do
+                CharPosition = InStr(1, DataDocumentName, Chr(34), vbBinaryCompare)
+                
+                If CharPosition > 0 Then
+                    DataDocumentName = Mid(DataDocumentName, 1, CharPosition - 1) & _
+                        Mid(DataDocumentName, CharPosition + 1)
+                End If
+            Loop While CharPosition > 0
+        End If
+    End With
+
+    SetWorkingFolder SetFolder:=False   ' restore to previous working folder
+    SetStandardFindOptions
+End Sub
+Public Sub F_FindLanguageOrProjectName(ByRef FileName As String)
+    ' Start the file name from document variables.
+    '
+    Dim tmpFileName As String
+    
+    Do
+        tmpFileName = VariableGet("LanguageName")
+        
+        If tmpFileName <> "" Then
+            FileName = tmpFileName
+            Exit Do
+        End If
+            
+        tmpFileName = VariableGet("ProjectCode")
+        
+        If tmpFileName <> "" Then
+            FileName = tmpFileName
+            Exit Do
+        End If
+            
+        FileName = VariableGet("LanguageCode")
+        Exit Do
+    Loop While tmpFileName = ""
+End Sub
+Sub FixFileName(FileName As String, ReplaceMe As String, WithThis As String)
+    ' Make sure there aren't any illegal characters such as colons
+    ' in the proposed filename.
+    '
+    ' For each ReplaceMe in the FileName,
+    '   replace it with WithThis
+    '
+    Dim tmpFileName As String
+    Dim CharPosition As Integer
+    
+' test data:
+' FileName = "\Samo/Want|ot" & Chr(34) & ", Genesis 1:1-15:23, 2006-Oct-22"
+    Do
+        CharPosition = InStr(1, FileName, ReplaceMe, vbTextCompare)
+        
+        If CharPosition > 0 Then
+            tmpFileName = Left(FileName, CharPosition - 1) & _
+                            WithThis & _
+                            Mid(FileName, CharPosition + Len(ReplaceMe))
+            FileName = tmpFileName
+        End If
+    Loop While CharPosition > 0
+End Sub
+Sub MakeCoverDocument()
+'
+' MakeCover Macro
+' Macro recorded 6/27/2006 by Jim Henderson
+'
+' Quit if the booklets macro has not run yet.
+'
+' Make a new document based on the current document,
+' delete all but the title page,
+' convert the paper orientation to landscape,
+' make it 2 columns and put a column break before the text,
+' so the text prints on the right page.
+' Save As main filename including "cover".
+Dim DefaultPaperSize As String
+Dim FileName As String
+Dim TextFileName
+Dim NewFileName As String
+Dim FNameLen As Integer
+Dim TopMargin As Single
+Dim BottomMargin As Single
+Dim LeftMargin As Single
+Dim RightMargin As Single
+Dim TextWidth As Single
+Dim gutter As Single
+
+    If VariableGet("FrontMatter") <> "done" Then
+        MsgBox _
+            Title:=strMakeCoverDoc_PrematureTitle & strSpaces, _
+            Prompt:=strMakeCoverDoc_PrematurePrompt & strSpaces
+            GoTo EndOfSub
+    End If
+    
+    ' Set default folder for cover document to the current directory
+    '
+    SetWorkingFolder SetFolder:=True
+
+    DefaultPaperSize = VariableGet("DefaultPaperSize")
+    FileName = ActiveDocument.Name
+    TextFileName = ActiveDocument.FullName
+    FNameLen = Len(FileName) - 4
+    NewFileName = Left(FileName, FNameLen) & " cover" & Right(FileName, 4)
+
+    Documents.Add template:=TextFileName, NewTemplate:=False
+
+    Selection.HomeKey Unit:=wdStory
+    
+    With Selection.Sections(1).PageSetup
+        TopMargin = .TopMargin
+        BottomMargin = .BottomMargin
+        LeftMargin = .LeftMargin
+        RightMargin = .RightMargin
+        gutter = .gutter
+        TextWidth = .PageWidth - .LeftMargin - .RightMargin - .gutter
+    End With
+        
+    ' Now find the end of the title page.
+    '
+    SetStandardFindOptions
+    Selection.Find.ClearFormatting
+    With Selection.Find
+        .Text = "^m"
+        .Replacement.Text = ""
+        .Forward = True
+        .Wrap = wdFindContinue
+        .Format = False
+    End With
+    Selection.Find.Execute
+    
+    If Selection.Find.Found = False Then
+        MsgBox _
+            Title:=strMakeCoverDoc_NoPageBreakTitle & strSpaces, _
+            Prompt:=strMakeCoverDoc_NoPageBreakPrompt & strSpaces
+        GoTo EndOfSub
+    End If
+    
+    Selection.Collapse
+    Selection.EndKey Unit:=wdStory, Extend:=wdExtend
+    Selection.Delete
+    
+    Selection.Sections(1).Headers(wdHeaderFooterFirstPage).Range.Text = ""
+    Selection.Sections(1).Footers(wdHeaderFooterFirstPage).Range.Text = ""
+    Selection.Sections(1).Headers(wdHeaderFooterPrimary).Range.Text = ""
+    Selection.Sections(1).Footers(wdHeaderFooterPrimary).Range.Text = ""
+
+    ' Change to landscape mode etc.
+    '
+    If DefaultPaperSize = "A4" Then
+        With ActiveDocument.PageSetup
+            .PageWidth = MillimetersToPoints(210)
+            .PageHeight = MillimetersToPoints(297)
+        End With
+    ElseIf DefaultPaperSize = "Letter" Then
+        With ActiveDocument.PageSetup
+            .PageWidth = InchesToPoints(8.5)
+            .PageHeight = InchesToPoints(11)
+        End With
+    End If
+    
+    With ActiveDocument.PageSetup
+        .Orientation = wdOrientLandscape
+        .OddAndEvenPagesHeaderFooter = False
+        .DifferentFirstPageHeaderFooter = False
+        .MirrorMargins = False
+    End With
+
+    ActiveWindow.ActivePane.View.Zoom.PageFit = wdPageFitFullPage
+    
+    With ActiveDocument.PageSetup
+        .LeftMargin = RightMargin   ' It'll be the outside of the left column.
+        .RightMargin = RightMargin  ' It'll be the outside of the right column.
+        .TopMargin = TopMargin
+        .BottomMargin = BottomMargin
+        .gutter = 0                 ' We'll include gutter in space between columns
+    End With
+    
+    With ActiveDocument.PageSetup.TextColumns
+        .SetCount NumColumns:=2
+        .EvenlySpaced = True
+        .LineBetween = False
+        .Spacing = LeftMargin + RightMargin + gutter
+        ' .FlowDirection = wdFlowLtr
+    End With
+
+    Selection.HomeKey Unit:=wdStory
+    Selection.InsertBreak Type:=wdColumnBreak
+    
+    On Error GoTo SaveError
+    
+    ActiveDocument.SaveAs FileName:=NewFileName, FileFormat:=wdFormatDocument, _
+        LockComments:=False, Password:="", AddToRecentFiles:=True, _
+        WritePassword:="", ReadOnlyRecommended:=False, EmbedTrueTypeFonts:=False, _
+        SaveNativePictureFormat:=False, SaveFormsData:=False, _
+        SaveAsAOCELetter:=False
+    On Error GoTo 0
+    GoTo SaveOK
+    
+SaveError:
+    MsgBox _
+        Title:=strMakeCover_SaveAsFailedTitle & strSpaces, _
+        Prompt:=strMakeCover_SaveAsFailedPrompt_1 & strSpaces & vbCr & _
+            vbCr & Err.Description & vbCr & vbCr & _
+            strMakeCover_SaveAsFailedPrompt_2
+    GoTo EndOfSub
+    
+SaveOK:
+    On Error GoTo 0
+    
+EndOfSub:
+    On Error GoTo 0
+    SetWorkingFolder SetFolder:=False   ' restore user's preference
+    SetStandardFindOptions
+End Sub
+Sub SetWorkingFolder(SetFolder As Boolean)
+'
+' If argument is given, set default save folder to it.
+' Remember original in global variable.
+' If no argument, or if argument is False, restore to previous value.
+'
+    If SetFolder = False Then       ' restore to previous value
+        If WorkingFolderUserPreference <> "" Then
+            Options.DefaultFilePath(Path:=wdDocumentsPath) = _
+                WorkingFolderUserPreference
+        End If
+    Else        ' remember user's preference & set to argument
+        If WorkingFolderUserPreference = "" Then
+            WorkingFolderUserPreference = _
+                Options.DefaultFilePath(Path:=wdDocumentsPath)
+        End If
+        
+        ' Now set the default save path to the current directory
+        '
+        Options.DefaultFilePath(Path:=wdDocumentsPath) = ActiveDocument.Path
+    End If
+End Sub
+

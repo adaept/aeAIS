@@ -1,0 +1,26 @@
+Attribute VB_Name = "VBA10plus"
+' code that works in VBA for Word version 10 (ie. Word XP) and higher.
+' in a separate module so it can be removed to check compilation
+' in older versions of VBA
+'
+Option Explicit
+Sub AdvancedSearchOptions()
+    If Val(Application.Version) >= WdXP Then
+        With Selection.Find
+            .MatchKashida = False
+            .MatchDiacritics = False
+            .MatchAlefHamza = False
+            .MatchControl = False
+            .MatchByte = False
+            .MatchFuzzy = False
+        End With
+    End If
+End Sub
+Sub NoAutoCanvas()
+    If Val(Application.Version) >= WdXP Then
+        On Error Resume Next
+        Application.Options.AutoCreateNewDrawings = False
+        On Error GoTo 0
+    End If
+End Sub
+

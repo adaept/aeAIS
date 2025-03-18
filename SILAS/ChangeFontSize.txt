@@ -1,0 +1,216 @@
+Attribute VB_Name = "ChangeFontSize"
+' Change Font Size macro
+'Allows you to change the font size (point size) for the styles that display vernacular text.
+' Nov 96  ver 1.0  B Wussow JAARS ICTS
+
+Option Explicit
+Public Sub MAIN()
+Attribute MAIN.VB_Description = "Allows you to change the font size (point size) for the styles that display vernacular text."
+Attribute MAIN.VB_ProcData.VB_Invoke_Func = "TemplateProject.ChangeFontSize.MAIN"
+ZoomSet
+ActiveWindow.ActivePane.View.Type = wdNormalView
+DoChangeSize (0)
+'ZoomRecall done in DoChangeSize
+End Sub
+
+Public Function CallDoChangeSize()
+    ' This is a function so that it won't appear in the macro list window.
+    '
+Dim Msg As String, Title As String
+    If VariableGet("NoLanguageSet") = "True" Then
+        Msg = "You must first assign a language to this Scripture text file. To do this, " & _
+            "please open the " & Chr(34) & "ScrLanguages" & Chr(34) & _
+            " menu and do the job called " & Chr(34) & "Set Language Project For This Text" & Chr(34) & "."
+        Title = "No Language Set (DoChSize)"
+        MsgBox Msg, , Title
+        Exit Function
+    End If
+    If VariableGet("LanguageSize") = "" Then
+        Title = "No Size Set"
+        MsgBox Msg, , Title
+        Exit Function
+    End If
+    Dim sPoints As String
+    Dim nPoints As Integer
+    sPoints = VariableGet("LanguageSize")
+    If sPoints = "" Or sPoints = " " Then sPoints = "0"
+    nPoints = CInt(sPoints)
+    DoChangeSize (nPoints)
+    ' MsgBox "The point size for this language is being set to " & nPoints
+End Function
+
+'---------------------------
+Private Sub DoChangeSize(nPoints)
+Dim sVersion$
+Dim sTitle$
+Dim nl$
+Dim bPrompt
+Dim sBodyStyle$
+Dim nStyles
+Dim nSizeSugCnt
+Dim iAns
+Dim n
+Dim sMsg$
+Dim nHeaderSize As Integer
+'Changes the font size of appropriate styles for vernacular text
+' nPoints is the point size to use for body text
+'if nPoints is zero, the user is first prompted to enter a font size
+
+'Initialize
+sVersion$ = "ver 1.0"   'Nov96
+sTitle$ = "Change Font Size  " + sVersion$  'Title for Dialog boxes
+nl$ = Chr(10)               ' new line
+bPrompt = 0
+If nPoints = 0 Then bPrompt = 1     'we will prompt the user
+
+'Specify the styles we will work with
+sBodyStyle$ = "_Vernacular_Base"   'base style for body text
+nStyles = 8         'num of additional styles to modify
+ReDim sStyle__$(nStyles - 1)    'names of additional styles to modify
+ReDim nSizeProp__(nStyles - 1)  'proportional size for these styles
+sStyle__$(0) = StdChapterStyle
+    nSizeProp__(0) = 1.1
+sStyle__$(1) = "s - Heading - Section Level 1"
+    nSizeProp__(1) = 0.9
+sStyle__$(2) = "r - Heading - Parallel References"
+    nSizeProp__(2) = 0.9
+sStyle__$(3) = "_Notes_Base"
+    nSizeProp__(3) = 0.8
+sStyle__$(4) = "_Peripherals_Base"
+    nSizeProp__(4) = 0.9
+sStyle__$(5) = "ms - Heading - Major Section Level 1"
+    nSizeProp__(5) = 1.1
+sStyle__$(6) = "mr - Heading - Major Section Range References"
+    nSizeProp__(6) = 1.1
+sStyle__$(7) = "rq...rq* - Cross Reference - Inline Quotation References"
+    nSizeProp__(7) = 0.83
+
+'Set the list of suggested point sizes
+nSizeSugCnt = 6
+ReDim saSizeSug__$(nSizeSugCnt - 1)
+saSizeSug__$(0) = " 9"
+saSizeSug__$(1) = "10"
+saSizeSug__$(2) = "11"
+saSizeSug__$(3) = "12"
+saSizeSug__$(4) = "13"
+saSizeSug__$(5) = "14"
+
+'Define the dialog box
+WordBasic.BeginDialog 346, 200, sTitle$
+    WordBasic.Text 10, 8, 268, 13, "Select a font size for the body text:", "Text1"
+    WordBasic.ComboBox 68, 32, 96, 101, saSizeSug__$(), "ComboBox1$"
+    WordBasic.OKbutton 225, 55, 88, 21
+    WordBasic.CancelButton 225, 85, 88, 21
+    WordBasic.Text 10, 145, 316, 13, "Be aware that a typeset book normally uses", "Text3"
+    WordBasic.Text 38, 160, 243, 13, "9 or 10 point for double column,", "Text4"
+    WordBasic.Text 30, 175, 245, 13, "10 or 11 point for single column.", "Text5"
+WordBasic.EndDialog
+Dim dlg As Object: Set dlg = WordBasic.CurValues.UserDialog
+
+'Get the current size of the body text
+GetCurrentSize:
+Dim FDSFrecord As Object: Set FDSFrecord = WordBasic.DialogRecord.FormatDefineStyleFont(False)
+WordBasic.FormatStyle Name:=sBodyStyle$, Define:=1
+WordBasic.CurValues.FormatDefineStyleFont FDSFrecord
+dlg.ComboBox1$ = FDSFrecord.Points
+
+'Present the Dialog
+If bPrompt Then
+    iAns = WordBasic.Dialog.UserDialog(dlg)
+    If iAns <> -1 Then GoTo EndOfSub    'User depressed 'Cancel'
+    nPoints = WordBasic.Int(WordBasic.Val(WordBasic.[LTrim$](dlg.ComboBox1$)))
+End If
+
+'Verify a valid point size
+If nPoints < 6 Or nPoints > 96 Then
+    WordBasic.MsgBox "Whoa!  " + dlg.ComboBox1$ + " is not an acceptable font size.", sTitle$, 48
+    If bPrompt Then
+        GoTo GetCurrentSize
+    Else
+        GoTo EndOfSub
+    End If
+End If
+
+'Change the body text style
+' Original WordBasic statements:
+' WordBasic.FormatStyle Name:=sBodyStyle$, Define:=1
+' WordBasic.FormatDefineStyleFont Points:=Str(nPoints)
+
+' new VBA statements:
+'
+With ActiveDocument.Styles(sBodyStyle$).Font
+    .Size = nPoints
+    ' .SizeBi = nPoints ' Set the BiSize in a separate module for old vns of Word.
+End With
+
+If Val(Application.Version) >= Wd2000 Then
+' SetBiDirectionalFontSize(ThisStyleName As String, ThisSize As Integer)
+    SetBiDirectionalFontSize sBodyStyle$, Int(nPoints)
+End If
+
+'Modify the additional styles
+ReDim naSizeNew__(nStyles - 1)
+For n = 0 To nStyles - 1
+    ' WordBasic.FormatStyle Name:=sStyle__$(n), Define:=1
+    ' naSizeNew__(n) = RoundInt(nPoints * (nSizeProp__(n)))
+    ' WordBasic.FormatDefineStyleFont Points:=Str()
+    
+    With ActiveDocument.Styles(sStyle__$(n)).Font
+        naSizeNew__(n) = RoundInt(nPoints * (nSizeProp__(n)))
+        .Size = naSizeNew__(n)
+        ' .SizeBi = naSizeNew__(n)
+    End With
+    
+    ' Now for the BiSize
+    '
+    If Val(Application.Version) >= Wd2000 Then
+        ' SetBiDirectionalFontSize(ThisStyleName As String, ThisSize As Integer)
+        SetBiDirectionalFontSize sStyle__$(n), Int(naSizeNew__(n))
+    End If
+Next n
+
+' Set page headings 1 point less than _Vernacular_Base,
+' to match publishing standard.
+'
+    WordBasic.FormatStyle Name:="_Header", Define:=1
+    nHeaderSize = RoundInt(nPoints - 1)
+    WordBasic.FormatDefineStyleFont Points:=Str(nHeaderSize)
+
+'If dropcap chapters are used, reset "c - Chapter Number" to small & yellow
+If VariableGet("ChapterStyle") = "drop" Then
+    ActiveDocument.Styles(StdChapterStyle).Font.ColorIndex = HiddenColor
+    ActiveDocument.Styles(StdChapterStyle).Font.Size = 1
+End If
+
+'Inform User of completion
+sMsg = "The '" + sBodyStyle + "' base style is now" + Str(nPoints) + " points."
+sMsg = sMsg + nl$ + "The font size of these styles has also been adjusted:"
+For n = 0 To nStyles - 1
+    sMsg$ = sMsg + nl$ + " " + sStyle__$(n) _
+        + "  " + Str(naSizeNew__(n)) + " points"
+Next n
+
+sMsg$ = sMsg + nl$ + " " + "_Header" _
+    + "  " + Str(nHeaderSize) + " points"
+
+' If bPrompt Then WordBasic.MsgBox sMsg$, sTitle$, 64
+If bPrompt Then MsgBox sMsg, , sTitle
+
+CheckForChapterNumberRunningTooFar
+SetDropCapSize
+ChangeLineSpacingPoints.ResetSpacing
+FootnoteParaHangSet ForceStyleSetting:=False     ' Reset hanging indents on footnotes to match new font size.
+
+If Not FormattingInProgress Then
+    OptionalLineBreaks
+End If
+
+Format_ca_items
+
+EndOfSub:
+End Sub     'end of DoChangeSize()
+Private Function RoundInt(n)
+'rounds a number to the nearest integer
+RoundInt = WordBasic.Int(n + (Sgn(n) * 0.5))
+End Function
+

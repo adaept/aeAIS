@@ -1,0 +1,1205 @@
+Attribute VB_Name = "SaveAsUSFM"
+'--------------------------------------------------------------------
+' Copied & adapted from PNG template SaveAsSFScripture - Save Word Scripture file as SF
+'--------------------------------------------------------------------
+' Apr 2010 - Jim_Henderson@SIL.org
+'   The PNG template had correspondences between SFM codes and stylenames
+'   coded in the template. Now with USFM, the USFM code letters
+'   are part of the stylename, so that is no longer necessary.
+' May 1998 - D Bevan  - ScrPNG98 version that doesn't use SFC or CC
+' Mar 1996 - B Wussow -
+' Oct 1994 - B Wussow - adapted from B Chapaitis' WinWordToSFM macro
+'--------------------------------------------------------------------
+
+'--------------------------------------------------------------------
+' GLOBAL VARIABLES
+'--------------------------------------------------------------------
+
+Dim sTitle$                 ' Message title
+Dim asMarker__$()           ' SFM markers array for unpredictable ones
+Dim asStyle__$()            ' Style array for unpredictable ones
+Dim nTags                   ' Number of unpredictable tags
+Dim Code As String          ' Code, derived from style name by DecideCode sub
+Dim StyleName As String     ' Used for working out the Code
+Dim StyleNameRsv As String  ' Used for looking up styles, in case StyleName is changed
+Dim NoteReference As String ' Holds footnote reference in case non-standard
+Dim nl$                     ' CR+LF
+
+Option Explicit
+Public Sub MAIN()
+'--------------------------------------------------------------------
+' SUB MAIN
+'--------------------------------------------------------------------
+Dim FNameOriginal$
+Dim FNameSF$
+
+ReDim asMarker__$(16)   ' *** Increase this if making more than 16 entries below
+ReDim asStyle__$(16)
+
+'Initialise Global Variables
+sTitle$ = "Save As USFM"
+nl$ = Chr(13) + Chr(10)
+
+' In USFM, stylenames contain the \code as the first word,
+' except where specified in this section.
+'
+nTags = 0
+
+nTags = nTags + 1
+asMarker__$(nTags) = "addpn"
+asStyle__$(nTags) = "(addpn...addpn*) - Special Text for Chinese"
+
+nTags = nTags + 1
+asMarker__$(nTags) = "li"
+asStyle__$(nTags) = "DEPRECATED phi - Paragraph - Indented - Hanging Indent"
+
+nTags = nTags + 1
+asMarker__$(nTags) = "sts"
+asStyle__$(nTags) = "rem - File - Status"
+
+nTags = nTags + 1
+asMarker__$(nTags) = "f"
+asStyle__$(nTags) = "Footnote Text"
+
+'Main body of macro
+Application.StatusBar = "               Preparing filename for USFM file -- please wait."
+SetupFileNames FNameOriginal$, FNameSF$     ' Set up filenames
+
+SetupWord                           ' Normalize Word
+EnableSmartQuotes False             ' Turn off smart quote processing
+ChangeToUSFM                        ' Insert SFMs
+SpreadVerseNumbers                  ' and put verse numbers on separate lines
+PostProcess                         ' Clean up the text
+
+' now to save the USFM document.
+'
+FileSaveOps.DataDocumentName = FNameSF$
+FileSaveOps.F_FileSaveAsEither AsDoc:=False, IsError:=False
+FNameSF$ = FileSaveOps.DataDocumentName
+EnableSmartQuotes                   ' Restore user's preference for smart quote processing
+
+End Sub
+Private Sub ChangeToUSFM()
+'--------------------------------------------------------------------
+' SUB ChangeToUSFM - Insert the standard format markers
+'--------------------------------------------------------------------
+
+' Remove any title page and copyright page and section breaks.
+' Convert any tables to text.
+' deal with special characters.
+' Undo any dropped chapter numbers
+'
+' For each non-built-in character style in the footnotes then story
+'   search for text in that style and put \codes before and after.
+'
+' Move footnotes into main story, with appropriate codes.
+'
+' For each story paragraph,
+'   put the appropriate \code before it
+'
+' Make sure each verse code starts on a new line.
+'
+Dim para As Paragraph
+Dim Note As Footnote
+Dim LastNote As Long
+Dim ThisNote As String
+Dim ThisSection As Section
+Dim DefinitiveStyle As String
+Dim rNote As Range
+Dim Found As Boolean
+Dim FileName As String
+Dim TextFileName
+Dim Path As String
+Dim NewFileName As String
+Dim FNameLen As Integer
+Dim rFinder As Range
+Dim TemporaryDoc As Document
+Dim FontName As String
+Dim tTable As Table
+Dim tRow As Row
+Dim rCl As Range        ' Chapter Label
+
+    ' At least in Word 2003, when we make lots of changes,
+    ' it seems the list of changes that can be undone gets too big,
+    ' so word silently stops making changes.
+    '
+    ' So we'll write to a new file, and make the changes there,
+    ' and write the file now and then,
+    '   which throws away the undo list.
+    '
+    Application.StatusBar = "       Making new file to modify -- please wait."
+    FileName = ActiveDocument.Name
+    TextFileName = ActiveDocument.FullName
+    Path = ActiveDocument.Path
+    FNameLen = Len(FileName) - 4
+    NewFileName = Left(FileName, FNameLen) & "-tmp"
+
+    Set TemporaryDoc = Documents.Add(template:=TextFileName, NewTemplate:=False)
+    ActiveDocument.SaveAs _
+        FileName:=Path & Application.PathSeparator & NewFileName, _
+        FileFormat:=wdFormatDocument, _
+        AddToRecentFiles:=False
+    TemporaryDoc.Activate
+
+    ' Remove any title page and copyright page.
+    '
+    If VariableGet("FrontMatter") = "done" Then
+        RemoveFrontMatter
+    End If
+
+    Application.StatusBar = "       Converting fixed spaces in verse numbers -- please wait."
+    Application.ScreenUpdating = False
+    
+    For Each ThisSection In ActiveDocument.Sections
+        With ThisSection.PageSetup.TextColumns
+            If .Count > 1 Then
+                .SetCount NumColumns:=1
+            End If
+        End With
+    Next ThisSection
+    
+    RemoveSectionBreaks
+    DoHeadFoot                          ' Delete Word headers/footers
+    CheckForChapterNumberRunningTooFar
+    ActiveDocument.Save
+    
+    ' Convert any tables to text.
+    '
+    For Each tTable In ActiveDocument.Tables
+        For Each tRow In tTable.Rows
+            tRow.ConvertToText Separator:=wdSeparateByDefaultListSeparator
+        Next tRow
+    Next tTable
+    
+    ActiveDocument.Save
+    Application.ScreenUpdating = False
+
+    ' If hyphens were converted to thin fixed spaces in booklet formatting,
+    '   change thin fixed spaces into hyphens.
+    '
+    If VariableGet("NoBreakHyphens") = "yes" Then
+        If ActiveDocument.Footnotes.Count > 0 Then
+            FixThinSpaces ActiveDocument.StoryRanges(wdFootnotesStory)
+        End If
+        
+        FixThinSpaces ActiveDocument.StoryRanges(wdMainTextStory)
+    End If
+
+    ' Convert fixed spaces in verse numbers into ordinary spaces.
+    '
+    Selection.HomeKey Unit:=wdStory
+    SetStandardFindOptions
+    Selection.Find.Style = ActiveDocument.Styles("v - Verse Number")
+    With Selection.Find
+        .Text = "^s"
+        .Replacement.Text = " "
+        .Format = True
+    End With
+    
+    Selection.Find.Execute Replace:=wdReplaceAll
+    ActiveDocument.Save
+
+    ' Convert no-break hyphens to ordinary hyphens
+    '
+    If ActiveDocument.Footnotes.Count > 0 Then
+        ActiveDocument.StoryRanges(wdFootnotesStory).Select
+        FixHyphens
+    End If
+    
+    ActiveDocument.StoryRanges(wdMainTextStory).Select
+    FixHyphens
+    
+    ' We're about to delete all text in the style "_CurrentChapter"
+    ' but a paragraph mark can have that character style,
+    ' and we don't want to delete any of them,
+    ' so we'll Reset them first.c
+    '
+    ResetParaMarks
+    
+    ' Now to remove the "current chapter" markers
+    '
+    SetStandardFindOptions
+    Selection.Find.Style = ActiveDocument.Styles("_CurrentChapter")
+    With Selection.Find
+        .Format = True
+    End With
+    Selection.Find.Execute Replace:=wdReplaceAll
+
+    ActiveDocument.Save
+    
+    ' For any spaces in Verse style,
+    '   reset them
+    '
+    Selection.HomeKey Unit:=wdStory
+    SetStandardFindOptions
+    Selection.Find.Style = ActiveDocument.Styles("v - Verse Number")
+    With Selection.Find
+        .Text = " "
+        .Replacement.Text = " "
+        .Format = True
+    End With
+    
+    Do
+        Found = Selection.Find.Execute
+        
+        If Found Then
+            Selection.Font.Reset
+            Selection.Collapse
+        End If
+    Loop While Found
+    
+    ' Unmake dropcap chapter numbers if any.
+    '
+    UnDropcapChapterNumbers "_Chapter_Drop"    ' new stylename used in SILAS
+    ActiveDocument.Save
+    
+    ' Files based on the 1998 template, SCR_V2.dot will have a style called "Chapter Drop"
+    ' if the user has made the chapter numbers into dropcaps.
+    ' If this style exists in this document and there is no error,
+    '   change the dropcap chapter numbers back into ordinary ones.
+    '
+    On Error GoTo -1: On Error GoTo NoSCR_V2DropcapChapterNumbers
+    DefinitiveStyle = ActiveDocument.Styles("Chapter Drop").Font.Name
+    On Error GoTo 0
+
+    ' Found the style, so now try to undo the dropcaps.
+    '
+    UnDropcapChapterNumbers "Chapter Drop"  ' old name from SCR_V2.DOT
+
+NoSCR_V2DropcapChapterNumbers:
+    On Error GoTo 0
+    
+    ' If any chapter labels,
+    '   remove them.
+    '
+    Selection.HomeKey Unit:=wdStory
+    SetStandardFindOptions
+    Selection.Find.Style = ActiveDocument.Styles(StdChapterStyle)
+    With Selection.Find
+        .Text = ""
+        .Format = True
+    End With
+    
+    Do
+        Found = Selection.Find.Execute
+        
+        If Found Then
+            SplitChapter rCl
+            If rCl.End > rCl.Start Then rCl.Delete
+            Selection.Start = Selection.End
+        End If
+    Loop While Found
+    
+    
+    ' Now to deal with the styles.
+    '
+    Application.ScreenUpdating = True
+    Application.StatusBar = "               Converting styles to USFM -- please wait."
+    Application.ScreenUpdating = False
+    LastNote = ActiveDocument.Footnotes.Count
+    
+    If LastNote > 0 Then
+        On Error GoTo NotesError
+        
+        EncodeCharacterStyles InFootnotes:=True
+        
+        For Each Note In ActiveDocument.Footnotes
+            Note.Range.Select
+            StyleName = Selection.Range.ParagraphFormat.Style
+            StyleNameRsv = StyleName
+            DecideCode
+            
+            If Code = "_BodyText_Base" _
+            Or Code = "Normal" Then
+                Code = "f"
+            End If
+            
+            Set rNote = Selection.Range.Duplicate
+            
+            If Selection.Characters(1) = vbTab Then
+                Selection.Characters(1).Delete
+            End If
+            
+            ' Replace line breaks and paragraph marks within the note
+            ' with \fp and a line break each
+            '
+            SetStandardFindOptions
+            rNote.Select
+            
+            With Selection.Find
+                .Text = "^l"
+                .Replacement.Text = "\fp ^l\fp*"
+                .Forward = True
+                .Wrap = wdFindStop
+            End With
+            Selection.Find.Execute Replace:=wdReplaceAll
+            
+            rNote.Select
+            
+            With Selection.Find
+                .Text = "^p"
+            End With
+            Selection.Find.Execute Replace:=wdReplaceAll
+            
+            NoteReference = Note.Reference.Text
+            rNote.Select
+
+            InsertCode ParaStyle:=True, WholeFootnote:=True
+        Next Note
+        
+        ActiveDocument.Save
+        
+        ' Now move the text of footnotes into the main story.
+        '
+        Application.ScreenUpdating = True
+        Application.StatusBar = "               Moving footnotes into main text -- please wait."
+        Application.ScreenUpdating = False
+        
+        Do
+            Set Note = ActiveDocument.Footnotes(LastNote)
+            Note.Range.Select
+            
+            ' remove reference letter in note.
+            '
+            Set rNote = Selection.Range.Duplicate
+            Selection.MoveUp Unit:=wdParagraph, Count:=1, Extend:=wdExtend
+            Selection.Delete
+            ThisNote = rNote.Text
+            Note.Reference.Select
+            Selection.Collapse
+            Note.Delete
+            Selection.InsertBefore ThisNote
+            LastNote = ActiveDocument.Footnotes.Count
+        Loop While LastNote > 0
+        
+        ActiveDocument.Save
+        
+NotesError:
+        On Error GoTo 0
+    End If
+
+    ' Remove spaces before paragraph marks
+    '
+    SetStandardFindOptions
+    Application.ScreenUpdating = True
+    Application.StatusBar = "               Removing spaces before paragraph marks -- please wait."
+    Application.ScreenUpdating = False
+    Selection.HomeKey Unit:=wdStory
+    
+    With Selection.Find
+        .Text = " ^p"
+        .Replacement.Text = "^p"
+    End With
+    
+    Selection.Find.Execute Replace:=wdReplaceAll
+    Application.ScreenUpdating = True
+    
+    ActiveDocument.Save
+    
+    ' Deleting the spaces between text in a character style and the following paragraph mark
+    ' can see the char style applied to the paragraph mark,
+    ' so now we'll undo that.
+    '
+    ResetParaMarks
+    
+    ' Now for the main story,
+    '   encode the runs of text in non-builtin character styles.
+    '
+    EncodeCharacterStyles InFootnotes:=False
+    ActiveDocument.Save
+
+    ' Convert any half-brackets back to brackets.
+    '
+    ReplaceAllInRange ActiveDocument.StoryRanges(wdMainTextStory), _
+        ChrW(763), "[", _
+        "Changing half brackets back to brackets -- please wait."
+
+    ReplaceAllInRange ActiveDocument.StoryRanges(wdMainTextStory), _
+        ChrW(764), "]", _
+        "Changing half brackets back to brackets -- please wait."
+
+    ' If Word is older than 2002 (ie older than Word XP),
+    '   convert smart quotes to angle brackets.
+    '   so they don't end up as straight quotes.
+    '
+    If Val(Application.Version) < WdXP Then
+        ReplaceAllInRange ActiveDocument.StoryRanges(wdMainTextStory), _
+            ChrW(8220), "<<", _
+            "Changing smart quotes to angle brackets -- please wait."
+        
+        ReplaceAllInRange ActiveDocument.StoryRanges(wdMainTextStory), _
+            Chr(145), "<", _
+            "Changing smart quotes to angle brackets -- please wait."
+        
+        ReplaceAllInRange ActiveDocument.StoryRanges(wdMainTextStory), _
+            Chr(243), "<=>", _
+            "Changing smart quotes to angle brackets -- please wait."
+ 
+        ReplaceAllInRange ActiveDocument.StoryRanges(wdMainTextStory), _
+            ChrW(8221), ">>", _
+            "Changing smart quotes to angle brackets -- please wait."
+        
+        ReplaceAllInRange ActiveDocument.StoryRanges(wdMainTextStory), _
+            Chr(146), ">", _
+            "Changing smart quotes to angle brackets -- please wait."
+    End If
+    
+    ' and add the paragraph codes.
+    '
+    Application.ScreenUpdating = True
+    Application.StatusBar = "               Adding codes to paragraphs -- please wait."
+    Application.ScreenUpdating = False
+    
+    For Each para In ActiveDocument.Paragraphs
+        para.Range.Select
+        StyleName = Selection.Range.ParagraphFormat.Style
+        StyleNameRsv = StyleName
+        DecideCode
+
+        If Code = "_BodyText_Base" _
+        Or Code = "Normal" Then
+            Code = "p"
+        End If
+
+        ' Remove extra paragraphs put in by SILAS formatting.
+        '
+        If Code = "_rq_Para" Then
+            Selection.Collapse
+            Selection.TypeBackspace
+            Selection.TypeText Text:=" "
+        Else
+            InsertCode ParaStyle:=True, WholeFootnote:=False
+        End If
+    Next para
+    
+    Code = ""
+    StyleName = ""
+    StyleNameRsv = StyleName
+    ActiveDocument.Save
+
+    ' Now change any other fixed spaces into ~ characters.
+    '
+    Application.ScreenUpdating = True
+    Application.StatusBar = "               Changing fixed spaces to ~ characters -- please wait."
+    Application.ScreenUpdating = False
+    Selection.HomeKey Unit:=wdStory
+    SetStandardFindOptions
+    Selection.Find.ClearFormatting
+    Selection.Find.Replacement.ClearFormatting
+    
+    With Selection.Find
+        .Text = "^s"
+        .Replacement.Text = "~"
+        .Forward = True
+        .Wrap = wdFindContinue
+        .Format = False
+    End With
+    
+    Selection.Find.Execute Replace:=wdReplaceAll
+    ActiveDocument.Save
+
+    ' Make sure optional line break (//) is mid-line,
+    ' not at the beginning of a line.
+    '
+    Application.ScreenUpdating = True
+    Application.StatusBar = "Standardizing optional line breaks -- please wait."
+    Application.ScreenUpdating = False
+    Selection.HomeKey Unit:=wdStory
+    SetStandardFindOptions
+    Selection.Find.ClearFormatting
+    Selection.Find.Replacement.ClearFormatting
+    
+    With Selection.Find
+        .Text = "^l//"
+        .Replacement.Text = " //"
+        .Forward = True
+        .Wrap = wdFindContinue
+        .Format = False
+    End With
+    
+    Selection.Find.Execute Replace:=wdReplaceAll
+    ActiveDocument.Save
+
+    ' Change page breaks to \pb
+    '
+    Application.ScreenUpdating = True
+    Application.StatusBar = "               Changing any page breaks to \pb codes -- please wait."
+    Application.ScreenUpdating = False
+    Selection.HomeKey Unit:=wdStory
+    
+    With Selection.Find
+        .Text = "^m"
+        .Replacement.Text = "\pb"
+        .Forward = True
+        .Wrap = wdFindContinue
+        .Format = False
+    End With
+    
+    Selection.Find.Execute Replace:=wdReplaceAll
+    
+    ' Remove spaces before paragraph marks
+    '
+    SetStandardFindOptions
+    Application.ScreenUpdating = True
+    Application.StatusBar = "               Removing spaces before paragraph marks -- please wait."
+    Application.ScreenUpdating = False
+    Selection.HomeKey Unit:=wdStory
+    
+    With Selection.Find
+        .Text = " ^p"
+        .Replacement.Text = "^p"
+    End With
+    
+    Selection.Find.Execute Replace:=wdReplaceAll
+    Application.ScreenUpdating = True
+    
+    ActiveDocument.Save
+    Application.ScreenUpdating = True
+    
+    ' and now reduce multiple spaces
+    '
+    Application.ScreenUpdating = True
+    Application.StatusBar = "               Reducing multiple spaces to one -- please wait."
+    Application.ScreenUpdating = False
+    Selection.HomeKey Unit:=wdStory
+    
+    With Selection.Find
+        ' .Text = " {2,}"
+        .Text = " {2" & Application.International(wdListSeparator) & "}"
+        .Replacement.Text = " "
+        .MatchWildcards = True
+        .Forward = True
+        .Wrap = wdFindContinue
+        .Format = False
+    End With
+    
+    Selection.Find.Execute Replace:=wdReplaceAll
+    Application.ScreenUpdating = True
+    
+    ' Set standard font for the whole file.
+    '
+    FontName = ActiveDocument.Styles("_Vernacular_Base").Font.Name
+    
+    WordBasic.EditSelectAll
+    WordBasic.FormatFont Font:=FontName, Bold:=0, Italic:=0, _
+        Points:=10, Underline:=0, StrikeThrough:=0, _
+        Superscript:=0, Subscript:=0, Hidden:=0, SmallCaps:=0, _
+        AllCaps:=0, Color:=0, Spacing:=0, Position:=0
+    WordBasic.FormatParagraph LeftIndent:=0, RightIndent:=0, Before:=0, _
+        After:=0, LineSpacingRule:=0, Alignment:=0, _
+        FirstIndent:=0
+    
+    Application.ScreenUpdating = True
+    Selection.EndKey Unit:=wdStory
+    ActiveDocument.Save
+End Sub
+Private Sub DecideCode()
+    Dim DotPosn As Long
+    Dim SpacePosn As Long
+    Dim Position As Long
+    Dim i As Integer
+    
+    If StyleName = "" Then
+        MsgBox _
+            Prompt:="Oh No! The variable 'StyleName' is empty :-(." & vbCrLf & _
+                "It should contain the name of the style, so DecideCode can work out the Code.", _
+            Buttons:=vbCritical, _
+            Title:="SILAS -- error in SaveAsUSFM:DecideCode"
+        EndMacro
+    End If
+    
+    ' For old styles, remove the obsoleter.
+    '
+    If StyleName Like "DEPRECATED *" Then
+        StyleName = Mid(StyleName, 12)
+    End If
+    
+    If StyleName Like "OBSOLETE *" Then
+        StyleName = Mid(StyleName, 10)
+    End If
+
+    ' Check for some special cases first.
+    '
+    For i = 1 To nTags      'For all the tags in the list
+        If StyleNameRsv = asStyle__$(i) Then
+            Code = asMarker__$(i)
+            Exit Sub
+        End If
+    Next i
+    
+    DotPosn = InStr(StyleName, ".")
+    SpacePosn = InStr(StyleName, " ")
+    
+    If DotPosn > 0 Then
+        If SpacePosn > 0 Then
+            If DotPosn < SpacePosn Then
+                Position = DotPosn
+            Else
+                Position = SpacePosn
+            End If
+        Else
+            Position = DotPosn
+        End If
+    Else
+        Position = SpacePosn
+    End If
+
+    If Position > 0 Then
+        Code = Left(StyleName, Position - 1)
+    Else
+        Code = StyleName
+    End If
+End Sub
+Private Sub DoHeadFoot()
+'--------------------------------------------------------------------
+' SUB DoHeadFoot - Remove the Word header and footer entries
+'--------------------------------------------------------------------
+
+' The following code works well if different sections use "same as
+' previous" header/footer definitions. If later sections use
+' different header/footers, the Word "ShowNextHeaderFooter" may skip
+' defined but unprinted definitions and the result is that they will
+' be appended to the text output.
+
+    WordBasic.PrintStatusBar "Removing headers and footers..."
+
+    ActiveDocument.Sections(1).Headers(wdHeaderFooterFirstPage).Range.Delete
+    ActiveDocument.Sections(1).Headers(wdHeaderFooterEvenPages).Range.Delete
+    ActiveDocument.Sections(1).Headers(wdHeaderFooterPrimary).Range.Delete
+    
+    ActiveDocument.Sections(1).Footers(wdHeaderFooterFirstPage).Range.Delete
+    ActiveDocument.Sections(1).Footers(wdHeaderFooterEvenPages).Range.Delete
+    ActiveDocument.Sections(1).Footers(wdHeaderFooterPrimary).Range.Delete
+    
+    WordBasic.ScreenUpdating 1
+End Sub
+Private Sub EncodeCharacterStyles(InFootnotes As Boolean)
+    ' For each non-builtin character style in the document,
+    '   search the current story for runs of text in the style
+    '       and for each one, put a code before it and one after it.
+    '
+    Dim ThisStyle As Style
+    Dim Found As Boolean
+    Dim ChangeMade As Boolean
+    Dim NextCharacters As String
+    
+    Application.ScreenUpdating = True
+    Application.StatusBar = "               Converting character styles to USFM -- please wait."
+    Application.ScreenUpdating = False
+    SetStandardFindOptions
+    
+    With Selection.Find
+        .Text = ""
+        .Replacement.Text = ""
+        .Forward = True
+        .Wrap = wdFindStop
+        .Format = True
+    End With
+    
+    If InFootnotes Then
+        ActiveDocument.StoryRanges(wdFootnotesStory).Select
+    Else
+        ActiveDocument.StoryRanges(wdMainTextStory).Select
+    End If
+                
+    Selection.HomeKey Unit:=wdStory
+    
+    For Each ThisStyle In ActiveDocument.Styles
+        If Not ThisStyle.BuiltIn Then
+            If ThisStyle.Type = wdStyleTypeCharacter Then
+                
+                ' Work out Code for this style and store in global variables
+                '
+                StyleName = ThisStyle.NameLocal
+                
+                ' Found a document once that had spurious styles with names like "Char Char"
+                ' so we'll ignore them
+                '
+                If StyleName Like " Char Char*" Then
+                    GoTo TryNextStyle
+                End If
+                
+                StyleNameRsv = StyleName
+                DecideCode
+                
+                If ChangeMade Then
+                    Selection.HomeKey Unit:=wdStory
+                    ChangeMade = False
+                End If
+                
+                Selection.Find.ClearFormatting
+                Selection.Find.Style = ActiveDocument.Styles(StyleNameRsv)
+                
+                ' If this is the footnote reference,
+                '   do nothing, for deletion later on
+                '
+                If StyleNameRsv = "_Footnote_Reference" Then
+                    GoTo TryNextStyle
+                End If
+                
+                ' I'd like to use a wildcard here, but can't get one that works reliably.
+                '
+                Do
+                    Found = False
+                    Found = Selection.Find.Execute
+                
+                    If Found Then
+                        ChangeMade = True
+                        
+                        If StyleNameRsv = "_CurrentChapter" Then
+                            ' in case this is just before a paragraph mark
+                            ' and this version of word refuses to delete it,
+                            '   make it harmless anyway.
+                            '
+                            Selection.Font.Reset
+                            Selection.Delete
+                            GoTo FindCharStyleAgain
+                        End If
+                        
+                        ' If this is a silly style made by Word,
+                        '   remove the character style.
+                        '
+                        If StyleNameRsv Like "* Char" Then
+                            Selection.Font.Reset
+                            ChangeMade = True
+                            GoTo FindCharStyleAgain
+                        End If
+                        
+                        ' If this is the footnote reference,
+                        '   do nothing, for deletion later on
+                        '
+                        If StyleNameRsv <> "_Footnote_Reference" Then
+                            InsertCode ParaStyle:=False, WholeFootnote:=False
+                            Selection.Start = Selection.End
+                        End If
+                    End If
+                    ' fallthrough
+FindCharStyleAgain:
+                    ' Avoid endless loop if final paragraph mark
+                    ' also has a character style.
+                    '
+                    If ActiveDocument.Range.End - Selection.End < 2 Then
+                        Exit Do
+                    End If
+                Loop While Found
+            End If
+        End If
+TryNextStyle:
+    Next ThisStyle
+    
+    Code = ""
+    StyleName = ""
+    StyleNameRsv = StyleName
+End Sub
+Private Sub Export(FNameSF$)
+'--------------------------------------------------------------------
+' SUB Export - Write the standard format file
+'--------------------------------------------------------------------
+
+'Format tidily to improve output
+'
+    Dim FontName As String
+    
+    FontName = ActiveDocument.Styles("_Vernacular_Base").Font.Name
+    
+    WordBasic.EditSelectAll
+    WordBasic.FormatFont Font:=FontName, Bold:=0, Italic:=0, _
+        Points:=10, Underline:=0, StrikeThrough:=0, _
+        Superscript:=0, Subscript:=0, Hidden:=0, SmallCaps:=0, _
+        AllCaps:=0, Color:=0, Spacing:=0, Position:=0
+    WordBasic.FormatParagraph LeftIndent:=0, RightIndent:=0, Before:=0, _
+        After:=0, LineSpacingRule:=0, Alignment:=0, _
+        FirstIndent:=0
+    WordBasic.StartOfDocument
+    
+    FileSaveOps.DataDocumentName = FNameSF$
+    FileSaveOps.F_FileSaveAsEither AsDoc:=False, IsError:=False
+    FNameSF$ = FileSaveOps.DataDocumentName
+    
+' If WordBasic.[Files$](FNameSF$) <> "" Then WordBasic.Kill (FNameSF$)
+' WordBasic.FileClose 2
+   
+End Sub
+Private Sub FinishUp(FNameOriginal$, FNameSF$)
+'--------------------------------------------------------------------
+' SUB FinishUp - Finish up the operation for the user
+'--------------------------------------------------------------------
+
+'Open original file
+WordBasic.FileOpen Name:=FNameOriginal$
+WordBasic.NextWindow
+' WordBasic.FileClose 2
+
+Exit Sub
+
+'Announce completion
+If -1 = WordBasic.MsgBox("The standard format file " + FNameSF$ + _
+    " has been saved. Do you want to view it in Word?", _
+    sTitle$, 292) Then
+        WordBasic.FileOpen Name:=FNameSF$, ReadOnly:=1
+        WordBasic.EditSelectAll
+        WordBasic.Font "Courier New", 10
+        WordBasic.FormatParagraph LeftIndent:=0, RightIndent:=0, Before:=0, _
+            After:=0, LineSpacingRule:=0, Alignment:=0, _
+            FirstIndent:=0
+        WordBasic.StartOfDocument
+        WordBasic.SetDocumentDirty 0
+End If
+
+End Sub
+Private Sub FixHyphens()
+    ' Convert no-break hyphens to ordinary hyphens.
+    '
+    Selection.HomeKey Unit:=wdStory
+    SetStandardFindOptions
+    With Selection.Find
+        .Text = "^~"
+        .Replacement.Text = "-"
+    End With
+    
+    Selection.Find.Execute Replace:=wdReplaceAll
+    ActiveDocument.Save
+End Sub
+Private Sub FixThinSpaces(rDocRange As Range)
+    ' If hyphens were converted to thin fixed spaces in booklet formatting,
+    '   change thin fixed spaces into hyphens.
+    '
+    Dim Found As Boolean
+    
+    On Error GoTo RangeMissing
+    rDocRange.Select
+    
+    Application.ScreenUpdating = True
+    Application.StatusBar = "       Changing thin fixed spaces to hyphens -- please wait."
+    Application.ScreenUpdating = False
+    Selection.Collapse
+    SetStandardFindOptions
+    
+    With Selection.Find
+        .Text = "^s"
+        .Forward = True
+        .Wrap = wdFindContinue
+        .Format = True
+    End With
+    
+    Do While Selection.Find.Execute
+        If Selection.Range.Font.Scaling = ThinSpaceScaling Then
+            Selection.Text = "-"
+            Selection.Range.Font.Scaling = 100
+            Selection.Start = Selection.End
+        End If
+        
+        Found = False
+    Loop
+    
+    ActiveDocument.Save
+RangeMissing:
+    On Error GoTo 0
+End Sub
+Private Sub InsertCode(ParaStyle As Boolean, WholeFootnote As Boolean)
+    ' Called with paragraph or run of text in a character style selected.
+    ' Inserts code(s) for paragraph or characters selected,
+    '   depending on type of style.
+    '
+    Dim NoteMarker As String
+    Dim Position As Long
+    Dim rCharStyle As Range
+    Dim rFindRange As Range
+    Dim rLastChar As Range
+
+    If Code = "" Then DecideCode
+    
+    If WholeFootnote Then
+        ' Check for explicit marker or automatic marker (Ctrl-B)
+        If NoteReference Like "[a-zA-Z0-9]" _
+        Or NoteReference = Chr(2) Then
+            NoteMarker = "+ "
+        Else
+            NoteMarker = NoteReference & " "
+        End If
+    Else
+        NoteMarker = ""
+    End If
+    
+    If StyleNameRsv = "_OptionalLineBreak" Then GoTo ResetFont
+    
+    Selection.InsertBefore "\" & Code & " " & NoteMarker
+    
+    If WholeFootnote _
+    Or ActiveDocument.Styles(StyleNameRsv).Type = wdStyleTypeCharacter Then
+        If Code = "v" Then
+            ' Where there is a string of verse numbers,
+            '   put a \v before each one.
+            '
+            Set rCharStyle = Selection.Range.Duplicate
+            Selection.Start = Selection.Start + 3
+            Set rLastChar = Selection.Range.Duplicate
+            rLastChar.Start = rLastChar.End - 1
+
+            Do
+                If rLastChar.Text = vbCr _
+                Or rLastChar.Text = " " Then
+                    rLastChar.End = rLastChar.End - 1
+                    rLastChar.Start = rLastChar.End - 1
+                    Selection.End = rLastChar.End
+                Else
+                    Exit Do
+                End If
+            Loop While Selection.End > Selection.Start
+            
+            Position = InStr(Selection.Text, " ")
+            
+            If Position > 1 Then
+                ' Using rFindRange to search,
+                '   so the setting for Selection.Find won't be changed.
+                '
+                Set rFindRange = Selection.Range.Duplicate
+                
+                With rFindRange.Find
+                    .ClearFormatting
+                    .Forward = True
+                    .Text = " "
+                    .Replacement.Text = " \" & Code & " "
+                    .Wrap = wdFindStop
+                    .Execute Replace:=wdReplaceAll
+                End With
+                
+            End If
+            
+            rCharStyle.Select
+        Else
+            If Code = "va" Then     ' remove fixed space, if any
+                Set rLastChar = Selection.Range.Duplicate
+                rLastChar.Start = rLastChar.End - 1
+                If rLastChar.Text = Chr(160) Then rLastChar.Delete
+            End If
+            
+            If Not Code Like "t[ch]*" Then
+                Selection.InsertAfter "\" & Code & "*"
+            End If
+        End If
+    End If
+    
+ResetFont:
+    Selection.Range.Font.Reset
+End Sub
+Private Sub PostProcess()
+'--------------------------------------------------------------------
+' SUB PostProcess - Clean up after ChangeToSFM has run
+'--------------------------------------------------------------------
+
+    WordBasic.PrintStatusBar "Post-processing..."
+    
+    ActiveDocument.StoryRanges(wdMainTextStory).Select
+    Selection.HomeKey Unit:=wdStory
+    
+    'Do something with any remaining initial paragraph markers
+    WordBasic.EditFindClearFormatting
+    WordBasic.EditReplaceClearFormatting
+    WordBasic.EditReplace Find:="\\\", Replace:="\?? ", Direction:=0, ReplaceAll:=1, Format:=0, Wrap:=1
+
+End Sub
+Private Sub SetupFileNames(FNameOriginal$, FNameSF$)
+'--------------------------------------------------------------------
+' SUB SetupFileNames - Check original and prompt for SF filename
+'--------------------------------------------------------------------
+Dim nChoice
+
+Dim FSArecord As Object: Set FSArecord = WordBasic.DialogRecord.FileSaveAs(False)
+
+'Be sure current file has a real name - not "Documentn"
+FNameOriginal$ = WordBasic.[FileName$]()    'get the original
+If (Len(FNameOriginal$) > 8 And WordBasic.[Left$](FNameOriginal$, 8) = "Document") Then
+    WordBasic.MsgBox "You must first save the Word Document." + nl$ + _
+        "Choose  File, Save As  from the menu.", sTitle$, 16
+    End
+End If
+
+'Be sure current file is a Word or RTF document
+WordBasic.CurValues.FileSaveAs FSArecord
+If (FSArecord.Format <> 0 And FSArecord.Format <> 6 _
+And FSArecord.Format <> 12 And FSArecord.Format <> 19) Then
+    WordBasic.MsgBox WordBasic.[FileName$]() + " can not be processed." + nl$ + _
+    "It must be a Word Document (not text or standard format).", _
+        sTitle$, 16
+    End
+End If
+
+'Determine File Name for SF file
+' FNameSF$ = Chr$(34) + WordBasic.[FileNameInfo$](FNameOriginal$, 4) + ".SFM" + Chr$(34)
+FNameSF$ = WordBasic.[FileNameInfo$](FNameOriginal$, 4) + ".SFM"
+' FSArecord.Name = FNameSF$
+' nChoice = WordBasic.Dialog.FileSaveAs(FSArecord)
+' If nChoice = 0 Then End
+' FNameSF$ = FSArecord.Name
+
+' No need to save the document and template,
+'   because we modify a copy.
+'
+Exit Sub
+
+'Save the document and template, for safe keeping
+If WordBasic.IsDocumentDirty() Then
+    If -1 = WordBasic.MsgBox("It seems you made changes since I opened this file." + nl$ _
+    + "Do you want to save changes to" + nl$ _
+    + vbTab + "'" + FNameOriginal$ + "'?", _
+                    sTitle$, 36) Then WordBasic.FileSave
+End If
+If WordBasic.IsTemplateDirty() Then
+    If -1 = WordBasic.MsgBox("Save changes to the WinWord template ?", _
+                    sTitle$, 36) Then WordBasic.SaveTemplate
+End If
+
+End Sub
+Private Sub SetupWord()
+'--------------------------------------------------------------------
+' SUB SetupWord - Normalise Word
+'--------------------------------------------------------------------
+
+'Switch to Normal View
+WordBasic.ViewNormal
+
+'Close the Header/Footer areas if open
+If WordBasic.ViewHeader() Then WordBasic.CloseViewHeaderFooter
+
+'Close the Footnote pane if open
+WordBasic.ViewFootnoteArea (0)
+
+'Expose all hidden text
+WordBasic.ToolsOptionsView Hidden:=1
+
+End Sub
+Private Sub SpreadVerseNumbers()
+    ' Make each verse number begin a new line.
+    '
+    Selection.HomeKey Unit:=wdStory
+    SetStandardFindOptions
+    With Selection.Find
+        .Text = " \v "
+        .Replacement.Text = "^p\v "
+    End With
+    Selection.Find.Execute Replace:=wdReplaceAll
+End Sub
+Private Sub UnDropcapChapterNumbers(ChapterStyle As String)
+    ' Converts dropcap chapter numbers into ordinary ones.
+    '
+    Dim ChapterNumber As String
+    Dim rContinueFromHere As Range
+    Dim FarEnough As Boolean
+    Dim Found As Boolean
+    Dim ChapterNameLength As Long
+    Dim rngCl As Range              ' "Psalm " part of Psalm 23
+    
+    Application.StatusBar = "       Converting dropcap chapter numbers -- please wait."
+    Selection.HomeKey Unit:=wdStory
+    DisableSmartCutAndPaste "disable"
+    SetStandardFindOptions
+    
+    Selection.Find.Style = ActiveDocument.Styles(ChapterStyle)
+    With Selection.Find
+        ' .Text = "[0-9]{1,3}"
+        .Text = "[0-9]{1" & Application.International(wdListSeparator) & "3}"
+        .MatchWildcards = True
+        .Format = True
+    End With
+    Found = Selection.Find.Execute
+    
+    If Found Then
+        ' UnHide Centered Chapter Numbers
+        '
+        ActiveDocument.Styles("c - Chapter Number").Font.ColorIndex = wdBlack
+        
+        With ActiveDocument.Styles("c - Chapter Number")
+            .Font.Size = 12
+            .ParagraphFormat.SpaceBefore = 9
+            .ParagraphFormat.SpaceAfter = 4
+            .ParagraphFormat.LineSpacingRule = wdLineSpaceExactly
+            .ParagraphFormat.LineSpacing = 13
+        End With
+        
+        ' and any ca Chapter Alternate numbers
+        '
+        With ActiveDocument.Styles("ca...ca* - Chapter Number - Alternate").Font
+            .ColorIndex = wdBlue
+            .Size = 12
+        End With
+    End If
+    
+    Do While Found
+        ChapterNumber = Selection.Text
+        Selection.Delete
+        ' On Error GoTo -1: On Error GoTo NoFrames
+        Selection.Frames(1).Select
+        Selection.Frames(1).Delete
+' NoFrames:
+        ' On Error GoTo 0
+        Selection.Delete
+        Selection.Paragraphs(1).Reset
+        Set rContinueFromHere = Selection.Range.Duplicate
+        
+        ' Now find out where to put the chapter number.
+        '
+        FarEnough = False
+        
+        Do Until FarEnough
+            Selection.MoveUp Unit:=wdParagraph, Count:=1
+            StyleName = Selection.Paragraphs(1).Style
+            
+            If Selection.Start = 0 _
+            Or StyleName = StdChapterStyle _
+            Or StyleName Like "nb *" Then
+                Exit Do
+            End If
+            
+            ' Move above iex paragraphs.
+            '
+            If StyleName Like "iex *" _
+            Or Selection.Characters(1).Style Like "ca...*" Then
+                GoTo TryAgain
+            End If
+            
+            ' If the paragraph is one of these,
+            '   the chapter code should go after it.
+            '
+            If StyleName Like "[hi]*" _
+            Or StyleName Like "m[ i]*" _
+            Or StyleName Like "p*" _
+            Or StyleName Like "q*" _
+            Or StyleName Like "re*" _
+            Or StyleName Like "toc*" _
+            Or StyleName Like "mt*" Then
+                FarEnough = True
+                Selection.MoveDown Unit:=wdParagraph, Count:=1
+                Exit Do
+            End If
+TryAgain:
+        Loop
+        
+        ' Put the chapter number in here, unless it's there already.
+        '
+        If Selection.Style = ActiveDocument.Styles(StdChapterStyle) Then
+            ' This has been formatted by SILAS,
+            '   so the chapter number should still be there.
+            '   But it might have a \cl field within the paragraph.
+            '
+            Selection.Paragraphs(1).Range.Select
+            SplitChapter rngCl
+            If rngCl.End > rngCl.Start Then rngCl.Delete
+        Else
+            Selection.TypeParagraph
+            Selection.MoveUp Unit:=wdParagraph, Count:=1
+            Selection.Style = ActiveDocument.Styles(StdChapterStyle)
+            Selection.Text = ChapterNumber
+        End If
+        
+        rContinueFromHere.Select
+        Found = Selection.Find.Execute
+    Loop
+    
+    DisableSmartCutAndPaste     ' restore user's preference
+End Sub
+'--------------------------------------------------------------------
+' END OF MODULE SaveAsUSFM
+'--------------------------------------------------------------------
+
+

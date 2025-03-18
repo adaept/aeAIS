@@ -1,0 +1,34 @@
+Attribute VB_Name = "Exists"
+'
+' Code WITHOUT Option Explicit
+'
+' This is so we can test to see if a variable exists or not,
+' from a module that has Option Explicit turned on.
+'
+Public Function Exists_InstalledBookletVersion() As String
+' If the variable exists, return its value,
+' else return "0"
+'
+    Dim x As String
+    
+    On Error GoTo -1: On Error GoTo NotThere
+    x = InstalledBookletVersion
+    
+    If x <> "" Then
+        Exists_InstalledBookletVersion = x
+    Else
+        Exists_InstalledBookletVersion = "0"
+    End If
+    
+    GoTo EndFn
+    
+NotThere:
+    Exists_InstalledBookletVersion = "0"
+    'fallthrough
+    
+EndFn:
+    On Error GoTo 0
+End Function
+
+
+        

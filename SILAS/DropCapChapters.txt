@@ -1,0 +1,424 @@
+Attribute VB_Name = "DropCapChapters"
+' Make DropCap Chapter Numbers Macro
+' Macro recorded 8/23/2005 by Kim E. Blewett
+'
+Public ChapCentered$     'style for Chapter
+Public ChapDrop$         'style for Dropped Chapter Number
+Dim CaColor As Integer
+Dim CaSize As Integer
+
+Option Explicit
+Public Sub MAIN()
+'
+' MakeDropCap2 Macro
+' Ex used from RomanWordBook.dot, AddChapterBookmarks
+' written by K Blewett 8-27-05; revised J Henderson
+' Insert DropCap chapter numbers, hide CenteredChap style.
+' Since USFM markup has a separate marker for vernacular for
+' "Chapter "(\cl -- cl - Chapter - Publishing Label)
+' and SILAS applies this before handling dropcap chapter numbers,
+' there may be a need to remove a word before creating the dropCap.
+'
+Dim rngToSrch As Range
+Dim rngResult As Range
+Dim ContinueHere As Long
+Dim Found As Boolean
+Dim strChapterDigit As String
+Dim rCl As Range              ' chapter name from \cl code, such as Psalm
+Dim rChapterRest As Range       ' Remaining digits
+
+Selection.HomeKey Unit:=wdStory
+ActiveWindow.ActivePane.View.Type = wdNormalView
+
+If VariableGet("ChapterStyle") = "drop" Then
+    MsgBox "The chapter numbers have been made into DropCaps already."
+    Exit Sub
+End If
+
+DisableSmartCutAndPaste "disable"
+
+Application.ScreenUpdating = False
+ChapCentered$ = StdChapterStyle
+ChapDrop$ = "_Chapter_Drop"
+ActiveWindow.ActivePane.View.ShowAll = True
+
+' Set search ranges
+Set rngToSrch = ActiveDocument.Range
+Set rngResult = ActiveDocument.Range
+
+rngResult.Find.ClearFormatting
+With rngResult.Find
+    .MatchCase = False
+    .MatchWholeWord = False
+    .MatchSoundsLike = False
+    .MatchAllWordForms = False
+End With
+
+' Loop to find all chapter titles, which
+' have style "c - Chapter Number"
+Do
+' Note: Word 2003 has stopped matching wildcards here,
+' so I have changed the search parameters. Jim Henderson, 16-Jun-2006
+'
+   rngResult.Find.ClearFormatting
+   rngResult.Find.Style = ActiveDocument.Styles(StdChapterStyle)
+   With rngResult.Find
+      .Text = ""
+      .Forward = True
+      .Wrap = wdFindStop
+      .MatchWildcards = False
+      .Format = True
+   End With
+      
+   Found = rngResult.Find.Execute
+   
+    ' rngResult.Select      ' for debugging
+    ' Exit loop if not found
+    ' rngResult.Find.Execute
+    If Not rngResult.Find.Found Then Exit Do
+    ContinueHere = rngResult.End
+   ' Select the chapter number, copy
+   ' rngResult.MoveEndUntil vbCrLf
+   rngResult.Select
+   
+   ' Exclude any spaces etc that follow chapter number
+   '
+   While rngResult.Characters(rngResult.Characters.Count) = " " _
+   Or rngResult.Characters(rngResult.Characters.Count) = vbCr
+        If rngResult.Characters.Count = 1 Then
+            rngResult.Characters(rngResult.Characters.Count).Delete
+            GoTo EmptyChapterDeleted
+        End If
+        
+        If rngResult.End = ActiveDocument.Range.End Then
+            ' The chapter number ends the document, so leave it there.
+            Selection.Collapse
+            Selection.Style = ActiveDocument.Styles(StdParaStyle)
+            GoTo EndOfChapterCodes
+        End If
+
+        rngResult.MoveEnd wdCharacter, -1
+        rngResult.Select
+   Wend
+   ' fallthrough
+
+EmptyChapterDeleted:
+   If Selection.End > Selection.Start Then
+        If rngResult.Characters(rngResult.Characters.Count).Style Like "v* Verse*" Then
+            ' This must be an empty chapter, with just verse numbers in it.
+            '
+            Selection.Start = ContinueHere
+            GoTo FindNextChapter
+        End If
+
+        ' Prepare to make dropcap with the first digit of the chapter number
+        ' then add the rest to the dropcap field.
+        '
+        ' (If the chapter field contains something like Psalm 23,
+        '   get just the digits.)
+        rngResult.Select
+        Gen.SplitChapter rCl
+        strChapterDigit = Selection.Characters(1)
+        Selection.Start = Selection.Start + 1
+        Set rChapterRest = Selection.Range.Duplicate
+   
+        ' Selection.Copy
+        Selection.Start = ContinueHere
+        
+        ' Find next verse & make a drop cap
+        Do
+            If Selection.Style Like "v* Verse*" Then Exit Do
+            If Selection.Style = StdChapterStyle Then GoTo FindNextChapter
+            Selection.MoveRight Unit:=wdCharacter, Count:=1
+        Loop While Selection.Start < ActiveDocument.Range.End - 1
+    
+        ' If the paragraph style is still "c - Chapter Number"
+        '   then there is no text in this chapter,
+        '   so we won't bother doing this dropcap.
+        '
+        If Selection.Paragraphs(1).Style = StdChapterStyle Then
+            If (ActiveDocument.Range.End - Selection.Start) < 2 Then
+                Exit Do
+            End If
+            Selection.MoveDown Unit:=wdParagraph, Count:=1
+        Else
+            InsertDropCap strChapterDigit, rChapterRest
+        End If
+   End If
+
+FindNextChapter:
+   ' Prepare for next search by
+   rngResult.Start = Selection.Start
+   ' and extending the end of rngResult
+   rngResult.End = rngToSrch.End
+   
+Loop Until Not rngResult.Find.Found
+
+EndOfChapterCodes:
+
+' We want to hide centred chapter numbers and Chapter Alternates that are centred,
+' but not the Chapter Alternates in dropcaps,
+' so we need to save values for the style "_ca"
+'
+
+CaColor = ActiveDocument.Styles("ca...ca* - Chapter Number - Alternate").Font.ColorIndex
+ CaSize = ActiveDocument.Styles("ca...ca* - Chapter Number - Alternate").Font.Size
+
+' Now Hide Centered Chapter Numbers
+'
+ActiveDocument.Styles(ChapCentered).Font.ColorIndex = HiddenColor
+
+With ActiveDocument.Styles(ChapCentered)
+    .Font.Size = 1
+    .ParagraphFormat.SpaceBefore = 0
+    .ParagraphFormat.SpaceAfter = 0
+    .ParagraphFormat.LineSpacingRule = wdLineSpaceExactly
+    .ParagraphFormat.LineSpacing = 1 ' minimum in Word 2007 is 0.7, but 1 better for new space-before method
+End With
+
+' and any ca Chapter Alternate numbers
+'
+ActiveDocument.Styles("ca...ca* - Chapter Number - Alternate").Font.ColorIndex = HiddenColor
+
+With ActiveDocument.Styles("ca...ca* - Chapter Number - Alternate")
+    .Font.Size = 1
+End With
+
+' Now to reinstate values for style "_ca"
+'
+ActiveDocument.Styles("_ca").Font.ColorIndex = CaColor
+ActiveDocument.Styles("_ca").Font.Size = CaSize
+
+Application.ScreenUpdating = True
+ActiveWindow.ActivePane.View.ShowAll = False
+
+VariableSet "ChapterStyle", "drop"
+SetDefaultView
+SetStandardFindOptions
+DisableSmartCutAndPaste     ' restore user's preference
+End Sub
+Sub InsertDropCap(strChapterDigit As String, rChapterRest As Range)
+' Recorded by Kim Blewett 8/23/05
+' Takes chapter number and makes it a DropCap
+' Modified by Jim Henderson to make the dropcap with the first digit
+' then add any other digits to the dropcap.
+'
+Dim VerseOne As Range
+Dim DropCap As Range
+Dim n As Long
+
+    Set VerseOne = Selection.Range
+    Selection.MoveUntil cset:=vbCr, Count:=wdBackward
+    ' Selection.Collapse
+    Selection.InsertBefore strChapterDigit
+    ' Selection.HomeKey Unit:=wdLine, Extend:=wdExtend
+    Set DropCap = Selection.Range
+    Selection.Style = ActiveDocument.Styles("_Chapter_Drop")
+    
+    ' Some texts come out of Pt with a space before verse 1,
+    ' which causes the dropcap function to fail,
+    ' so let's remove it if it's there.
+    '
+    ' Do While Selection.Characters(1) = " "
+        ' Selection.Characters(1).Delete
+    ' Loop
+    
+    ' and remove any spaces after dropcap number.
+    '
+    Do
+        n = Selection.Characters.Count
+        If Selection.Characters(n) = " " Then
+            Selection.Characters(n).Delete
+        Else
+            Exit Do
+        End If
+    Loop While n > 1
+    
+    DropCap.Select
+    
+    With Selection.Paragraphs(1).DropCap
+        .Position = wdDropNormal
+        .LinesToDrop = 2
+'        .FontName = VariableGet("LanguageFont")
+        .DistanceFromText = MillimetersToPoints(2)
+'        .DistanceFromText = InchesToPoints(0)
+    End With
+    
+    If Selection.Paragraphs(1).Format.FirstLineIndent > 0 Then
+        Selection.Paragraphs(1).Format.FirstLineIndent = 0
+    End If
+    
+    DropCap.Select
+    Selection.Font.Reset
+    Selection.Style = ActiveDocument.Styles("_Chapter_Drop")
+    
+    ' A paragraph style such as for \d might supply italic,
+    '   If so in this case, turn it off.
+    '
+    If Selection.Font.Italic Then Selection.Font.Italic = False
+
+    If rChapterRest Like "[(0-9 ]*" Then
+        Selection.InsertAfter rChapterRest
+        If rChapterRest.Characters(rChapterRest.Characters.Count).Style _
+            = "ca...ca* - Chapter Number - Alternate" Then
+            ' Apply ca style to the second number
+            '
+            DropCap.Select
+            Selection.End = Selection.End - 1
+            Selection.Start = Selection.End - 1
+            
+            While Selection.Characters(1) <> " " _
+            And Selection.Start > DropCap.Start
+                Selection.Start = Selection.Start - 1
+            Wend
+            
+            Selection.Font.Reset
+            Selection.Style = "_ca"
+            If Selection.Font.Italic = False Then Selection.Font.Italic = True
+            DropCap.Select
+        End If
+    End If
+    
+    Selection.MoveRight Unit:=wdCharacter, Count:=1
+    
+    ' and remove any spaces between dropcap number and versenumber.
+    '
+    Do While Selection.Characters(1).Text = " "
+        Selection.Characters(1).Delete
+    Loop
+End Sub
+Public Sub HideNumberForEachVerse1Now()
+    If VariableGet("HideNumberForEachVerse1") = "yes" Then
+        SetStandardFindOptions
+        HideNumberForEachVerse1_internal StyleName:=StdVerseStyle
+        HideNumberForEachVerse1_internal StyleName:="va...va* - Verse Number - Alternate"
+        HideNumberForEachVerse1_internal StyleName:="vp...vp* - Verse Number - Publishing Alternate"
+        SetStandardFindOptions
+    End If
+End Sub
+Private Sub HideNumberForEachVerse1_internal(StyleName As String)
+Dim Found As Boolean
+Dim rVerse1 As Range
+    
+    Selection.HomeKey Unit:=wdStory
+    Selection.Find.ClearFormatting
+    Selection.Find.Replacement.ClearFormatting
+    Selection.Find.Style = ActiveDocument.Styles(StyleName)
+    
+    With Selection.Find
+        .Text = ""
+        .Replacement.Text = ""
+        .Forward = True
+        .Wrap = wdFindStop
+        .Format = True
+    End With
+    
+    Do
+        With Selection.Find
+            .Text = "1"
+            .MatchWholeWord = True
+        End With
+        
+        Found = Selection.Find.Execute
+        
+        If Found Then
+            Set rVerse1 = Selection.Range.Duplicate
+            
+            ' See if the next character is a non-breaking space.
+            '
+            Selection.Start = Selection.End
+            
+            If Selection.Start < ActiveDocument.Range.End Then
+                Selection.End = Selection.Start + 1
+                
+                If Selection.Text = Chr(160) Then       ' non-breaking space, that is
+                    Selection.Start = rVerse1.Start
+                    Selection.Font.Hidden = True        ' Hide the verse number & space
+                End If
+                Set rVerse1 = Nothing
+            End If
+                
+            Selection.Start = Selection.End
+            GoTo LoopEnd
+            
+            ' Now hide the chapter code.
+            '
+            Do While Selection.End < ActiveDocument.Range.End
+                Selection.End = Selection.Start + 1
+                If Selection.Style = ActiveDocument.Styles("_CurrentChapter") Then
+                    Selection.Font.Hidden = True
+                Else
+                    Selection.Start = Selection.End
+                    Exit Do
+                End If
+                Selection.Start = Selection.End
+            Loop
+        Else
+            Selection.Start = Selection.End
+        End If
+LoopEnd:
+    Loop While Found
+End Sub
+Public Sub RevealNumberForEachVerse1Now()
+    If VariableGet("HideNumberForEachVerse1") <> "yes" Then
+        With ActiveWindow.View
+            .ShowHiddenText = True
+        End With
+        
+        SetStandardFindOptions
+        RevealNumberForEachVerse1_internal StyleName:=StdVerseStyle
+        RevealNumberForEachVerse1_internal StyleName:="va...va* - Verse Number - Alternate"
+        RevealNumberForEachVerse1_internal StyleName:="vp...vp* - Verse Number - Publishing Alternate"
+        
+        With ActiveWindow.View
+            .ShowHiddenText = False
+        End With
+        
+        SetStandardFindOptions
+    End If
+End Sub
+Private Sub RevealNumberForEachVerse1_internal(StyleName As String)
+    
+Dim Found As Boolean
+    
+    Selection.Find.ClearFormatting
+    Selection.Find.Replacement.ClearFormatting
+    
+    With Selection.Find
+        .Text = ""
+        .Replacement.Text = ""
+        .Forward = True
+        .Wrap = wdFindContinue
+        .Format = True
+        .Style = ActiveDocument.Styles(StyleName)
+        .Font.Hidden = True
+    End With
+    
+    With Selection.Find.Replacement
+        .Font.Hidden = False
+        .Style = ActiveDocument.Styles(StyleName)
+    End With
+    Selection.Find.Execute Replace:=wdReplaceAll
+    
+    ' Now reveal the chapter code.
+    '
+    Selection.Find.ClearFormatting
+    Selection.Find.Replacement.ClearFormatting
+    With Selection.Find
+        .Text = ""
+        .Replacement.Text = ""
+        .Forward = True
+        .Wrap = wdFindContinue
+        .Format = True
+        .Style = ActiveDocument.Styles("_CurrentChapter")
+        .Font.Hidden = True
+    End With
+    
+    With Selection.Find.Replacement
+        .Font.Hidden = False
+        .Style = ActiveDocument.Styles("_CurrentChapter")
+    End With
+    Selection.Find.Execute Replace:=wdReplaceAll
+    
+    SetStandardFindOptions
+End Sub

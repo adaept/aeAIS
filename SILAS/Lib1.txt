@@ -1,0 +1,118 @@
+Attribute VB_Name = "Lib1"
+
+' Lib1
+'A library of generally useful WordBasic routines
+'B Wussow   Mar 97
+' Jun97 Josh Kelly  added the EndMacro routine
+' Dec97 BDW  added GetVScroll and SetVScroll routines
+
+
+'------------------
+'STRINGS - Routines To work with strings
+
+
+
+
+'------------------
+'STYLES - Routines To work with styles
+
+
+Option Explicit
+Private Sub GetMissingStyle(sStyle$)
+Dim FTrec As Object
+Dim template$
+'Checks if the given style name exists in the doc
+'If not, it copies the style from the attached template
+'This is rather important if new macros use a style that did not exist in older versions of your template - thus the style may be missing from documents
+
+If WordBasic.[StyleDesc$](sStyle$) = "" Then    'style does not exist-get it
+
+    Set FTrec = WordBasic.DialogRecord.FileTemplates(False)
+    WordBasic.CurValues.FileTemplates FTrec
+    template$ = FTrec.template
+    If template$ <> "" Then         'open doc has a template
+        WordBasic.Organizer Copy:=1, Source:=template$, _
+            Destination:=WordBasic.[FileName$](), _
+            Name:=sStyle$, Tab:=0
+    End If
+
+End If 'get it
+End Sub
+
+'------------------
+'SCROLLING - Scrolling routines
+
+
+Private Function GetVScroll()
+Dim n
+' Returns the current vertical scroll position as % of doc length
+' A better function that Word's VScroll()
+
+n = WordBasic.VScroll()
+
+' Also set some bookmarks to help if needed
+WordBasic.CopyBookmark "\Sel", "GetVScroll_2"  'remember current selection
+WordBasic.StartOfWindow
+WordBasic.LineDown      'optimize for after user scrolls down - partial line may be at top of window
+WordBasic.StartOfLine
+WordBasic.CopyBookmark "\Sel", "GetVScroll_1"  'remember near start of window
+WordBasic.EndOfWindow
+'LineUp
+WordBasic.StartOfLine
+WordBasic.CopyBookmark "\Sel", "GetVScroll_3"  'remember near end of window
+WordBasic.WW7_EditGoTo Destination:="GetVScroll_2"      'restore selection
+
+GetVScroll = n
+End Function
+
+Private Sub SetVScroll(n)
+Dim n1
+'Scrolls vertically to the specified percentage of doc length
+' or as close as possible
+' A better routine than Word's VScroll
+' Side effect: the insertion point will be moved
+
+WordBasic.VScroll n
+n1 = WordBasic.VScroll()    'check where Word actually went
+
+' can't trust VScroll() alone
+WordBasic.WW7_EditGoTo Destination:="GetVScroll_1"
+While WordBasic.CmpBookmarks("\Sel", "GetVScroll_3") = 2
+    WordBasic.LineDown: WordBasic.StartOfLine
+Wend
+
+WordBasic.EditBookmark Name:="GetVScroll_1", Delete:=1
+WordBasic.EditBookmark Name:="GetVScroll_2", Delete:=1
+WordBasic.EditBookmark Name:="GetVScroll_3", Delete:=1
+End Sub
+
+Public Sub MAIN()
+Attribute MAIN.VB_Description = "Library of some generally useful WordBasic routines."
+Attribute MAIN.VB_ProcData.VB_Invoke_Func = "TemplateProject.Lib1.MAIN"
+Dim v
+Dim n
+v = WordBasic.VScroll()
+n = GetVScroll
+WordBasic.StartOfDocument
+SetVScroll (n)
+WordBasic.MsgBox "Fixed to within " + Str(v - WordBasic.VScroll())
+End Sub
+
+
+'------------------
+'PROCESS - Process control routines
+
+Public Sub EndMacro()
+' Exits the currently running macro using whatever method is
+' appropriate.  This function is used because the Stop - 1 command
+' does not work as advertised under VBA / Word 97.
+' Okay, I admit this is something of a kluge, seeing as how that End
+' command would cause WordBasic to die if it ever saw it, but since
+' WordBasic is an interpreted language, it will never see it.
+If InStr(WordBasic.[AppInfo$](2), "6.0") Or InStr(WordBasic.[AppInfo$](2), "7.0") Then
+    Stop
+Else
+    End
+End If
+End Sub
+

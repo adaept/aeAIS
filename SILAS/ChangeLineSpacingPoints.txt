@@ -1,0 +1,364 @@
+Attribute VB_Name = "ChangeLineSpacingPoints"
+Dim FontSizePts As Double
+Dim BaseSpacingPts As Double
+Dim LeadingHeight As String
+Dim Spacing As Double
+
+Option Explicit
+Sub LineSpacingDialog()
+Dim NewLineSpacing As String
+Dim NewLineSpValue As Double
+Dim CurrentLineSpValue As Double
+Dim CurrentLineSpacing As String
+
+    CurrentLineSpacing = VariableGet("CurrentLineSp")
+    
+   With ActiveDocument.Styles("_BodyText_Base").ParagraphFormat
+      If .LineSpacingRule = 2 Then
+         CurrentLineSpValue = 2  'double
+      ElseIf .LineSpacingRule = 1 Then
+         CurrentLineSpValue = 1  '1.5
+      ElseIf .LineSpacingRule = 5 Then
+         CurrentLineSpValue = 5  'multiple; must set LineSpacing as well
+      Else: CurrentLineSpValue = 4  'single (exact)
+      End If
+   End With
+
+   dbChangeLineSpacing.Show
+   
+   NewLineSpacing = VariableGet("CurrentLineSp")
+   
+   If NewLineSpacing = CurrentLineSpacing Then Exit Sub
+   
+   If NewLineSpacing = "double" Then
+      NewLineSpValue = 2
+   ElseIf NewLineSpacing = "oneandhalf" Then
+      NewLineSpValue = 1
+   ElseIf NewLineSpacing = "triple" Then
+      NewLineSpValue = 5
+   Else: NewLineSpValue = 4
+   End If
+
+   If NewLineSpValue = CurrentLineSpValue Then Exit Sub
+   Spacing = NewLineSpValue
+   SetSpacing
+   
+End Sub
+Sub LineSpacingToggle()
+' written by K.Blewett 12/2006 to provide exact line spacing based on fontsize and
+' Inifile setting for line spacing. Allows for columns to align across the page.
+' mod. 1/5/07 KB, _Notes_Base style set to "single" rather than "exact" for better
+' look in Booklets
+Spacing = ActiveDocument.Styles("_BodyText_Base").ParagraphFormat.LineSpacingRule
+
+'Change the line spacing value
+Select Case Spacing
+        Case wdLineSpaceExactly             '4 single
+            Spacing = wdLineSpace1pt5   ' 1   ' 1.5
+        Case wdLineSpaceSingle              '0 if not set exactly
+            Spacing = wdLineSpace1pt5   ' 1   ' 1.5
+        Case wdLineSpace1pt5
+            Spacing = wdLineSpaceDouble     ' 2   ' double
+        Case Else
+            Spacing = wdLineSpaceExactly        ' 4   'single
+End Select
+SetSpacing
+End Sub
+Sub SingleSpacingNew()
+Spacing = 4
+SetSpacing
+End Sub
+Sub DoubleSpacingNew()
+Spacing = 2
+SetSpacing
+End Sub
+Sub TripleSpacingNew()
+    Dim SpaceWordsApart As Integer
+    
+    Spacing = 5
+    SetSpacing
+    SpaceWordsApart = MsgBox( _
+        Prompt:="Do you want to add space between words, for writing glosses under them?", _
+        Buttons:=vbYesNo, _
+        Title:="Space between words?")
+        
+    If SpaceWordsApart = vbYes Then SpaceBetweenWords
+End Sub
+Sub OneAndHalfSpacingNew()
+Spacing = 1
+SetSpacing
+End Sub
+Sub ResetSpacing()
+Spacing = ActiveDocument.Styles("_BodyText_Base").ParagraphFormat.LineSpacingRule
+If Spacing = 0 Then Spacing = 4
+SetSpacing
+End Sub
+Function SetSpacing()
+ZoomSet
+ActiveWindow.View.Type = wdNormalView
+FontSizePts = ActiveDocument.Styles("_BodyText_Base").Font.Size
+LeadingHeight = VariableGet("Leading")
+   ' Comes from Variable in AdvancedFontOptions: normal, tall, extratall
+'LeadingHeight = "normal"
+
+   If LeadingHeight = "tall" Then
+      BaseSpacingPts = RoundInt(FontSizePts * 1.3)
+   ElseIf LeadingHeight = "extratall" Then
+      BaseSpacingPts = RoundInt(FontSizePts * 1.4)
+   Else: BaseSpacingPts = RoundInt(FontSizePts * 1.2)
+   End If
+
+With ActiveDocument.Styles("_BodyText_Base").ParagraphFormat
+    .LineSpacingRule = Spacing
+    If .LineSpacingRule = 4 Then .LineSpacing = BaseSpacingPts
+    If Spacing = 5 Then
+        .LineSpacingRule = wdLineSpaceMultiple
+        .LineSpacing = BaseSpacingPts * 3
+    End If
+    .SpaceBefore = 0
+    .SpaceAfter = 0
+End With
+
+With ActiveDocument.Styles("_Intro_Base").ParagraphFormat
+    .LineSpacingRule = Spacing
+    If .LineSpacingRule = 4 Then .LineSpacing = BaseSpacingPts
+    If .LineSpacingRule = 5 Then .LineSpacing = BaseSpacingPts * 3
+    .SpaceBefore = 0
+    .SpaceAfter = 0
+End With
+
+With ActiveDocument.Styles("_Notes_Base").ParagraphFormat
+    .LineSpacingRule = Spacing
+'    If .LineSpacingRule = 4 Then .LineSpacing = BaseSpacingPts
+    If .LineSpacingRule = 4 Then .LineSpacing = BaseSpacingPts - 2
+    If .LineSpacingRule = 5 Then .LineSpacing = (BaseSpacingPts - 2) * 3
+    .SpaceBefore = 0
+    .SpaceAfter = 0
+End With
+
+' fff This is the place to set the size of the space above section headings.
+'
+With ActiveDocument.Styles("_Heading_Base").ParagraphFormat
+    .LineSpacingRule = Spacing
+    If .LineSpacingRule = 4 Then .LineSpacing = BaseSpacingPts * 1.5
+    If .LineSpacingRule = 5 Then .LineSpacing = BaseSpacingPts * 3
+    .SpaceAfter = 4
+    .SpaceBefore = BaseSpacingPts - 4
+End With
+
+' fff need to set space before chapter numbers differently if dropcaps
+'
+With ActiveDocument.Styles(StdChapterStyle).ParagraphFormat
+    .LineSpacingRule = Spacing
+    If .LineSpacingRule = 4 Then .LineSpacing = BaseSpacingPts
+    If .LineSpacingRule = 5 Then .LineSpacing = BaseSpacingPts * 3
+    .SpaceAfter = 4
+    .SpaceBefore = BaseSpacingPts - 4
+End With
+
+' fff This is the place to set the size of the space above section headings.
+'
+With ActiveDocument.Styles("s - Heading - Section Level 1").ParagraphFormat
+    .LineSpacingRule = Spacing
+    If .LineSpacingRule = 4 Then .LineSpacing = BaseSpacingPts
+    If .LineSpacingRule = 5 Then .LineSpacing = BaseSpacingPts * 3
+    .SpaceAfter = 4
+    .SpaceBefore = BaseSpacingPts - 4
+End With
+
+With ActiveDocument.Styles("ms - Heading - Major Section Level 1").ParagraphFormat
+    .LineSpacingRule = Spacing
+    If .LineSpacingRule = 4 Then .LineSpacing = BaseSpacingPts
+    If .LineSpacingRule = 5 Then .LineSpacing = BaseSpacingPts * 3
+    .SpaceAfter = 4
+    .SpaceBefore = BaseSpacingPts - 4
+End With
+
+With ActiveDocument.Styles("mr - Heading - Major Section Range References").ParagraphFormat
+    .LineSpacingRule = Spacing
+    If .LineSpacingRule = 4 Then .LineSpacing = BaseSpacingPts
+    If .LineSpacingRule = 5 Then .LineSpacing = BaseSpacingPts * 3
+    .SpaceAfter = 4
+    .SpaceBefore = BaseSpacingPts - 4
+End With
+
+With ActiveDocument.Styles("r - Heading - Parallel References").ParagraphFormat
+    .LineSpacingRule = Spacing
+    If .LineSpacingRule = 4 Then .LineSpacing = BaseSpacingPts
+    If .LineSpacingRule = 5 Then .LineSpacing = BaseSpacingPts * 3
+    .SpaceAfter = 4
+    .SpaceBefore = BaseSpacingPts - 4
+End With
+
+With ActiveDocument.Styles("_rq_Para").ParagraphFormat
+    .LineSpacingRule = Spacing
+    If .LineSpacingRule = 4 Then .LineSpacing = BaseSpacingPts
+    If .LineSpacingRule = 5 Then .LineSpacing = BaseSpacingPts * 3
+    .SpaceBefore = 0
+    .SpaceAfter = 0
+End With
+
+'Make _Footer and _CheckingDetails stay singlespaced
+With ActiveDocument.Styles("_Footer").ParagraphFormat
+    .LineSpacingRule = 4
+    .LineSpacing = BaseSpacingPts - 2
+'    .LineSpacingRule = wdLineSpaceSingle
+'    If .LineSpacingRule = 4 Then .LineSpacing = BaseSpacingPts
+'    If .LineSpacingRule = 4 Then .LineSpacingRule = wdLineSpaceSingle
+    .SpaceBefore = 0
+    .SpaceAfter = 0
+End With
+
+With ActiveDocument.Styles("_CheckingDetails").ParagraphFormat
+    .LineSpacingRule = 4
+    .LineSpacing = BaseSpacingPts - 2
+'    .LineSpacingRule = wdLineSpaceSingle
+'    If .LineSpacingRule = 4 Then .LineSpacing = BaseSpacingPts
+'    If .LineSpacingRule = 4 Then .LineSpacingRule = wdLineSpaceSingle
+    .SpaceBefore = 0
+    .SpaceAfter = 0
+End With
+
+    CombinedRefStyles
+    'ActiveWindow.ActivePane.View.Type = ViewType
+    SetDropCapSize
+    SetDefaultView
+End Function
+Sub CombinedRefStyles()
+' Find sequences of reference lines etc
+' and remove space before etc.
+'
+Dim StyleName As String
+Dim TableExit As Boolean
+Dim Position As Long
+
+TableExit = False
+
+If VariableGet("CombinedRefs") = "done" Then Exit Sub
+
+Application.ScreenUpdating = False
+
+   Selection.HomeKey Unit:=wdStory
+   
+   Do
+      StyleName = Selection.Paragraphs(1).Style
+      If StyleName Like "s*" _
+      Or StyleName Like "ms*" Then
+         Selection.MoveDown Unit:=wdParagraph, Count:=1
+        
+         StyleName = Selection.Paragraphs(1).Style
+         If StyleName Like "r *" _
+         Or StyleName Like "mr*" Then
+            Selection.ParagraphFormat.SpaceBefore = 0
+            Selection.MoveUp Unit:=wdParagraph, Count:=1
+            Selection.ParagraphFormat.SpaceAfter = 0
+            Selection.MoveDown Unit:=wdParagraph, Count:=2
+         End If
+      End If
+        
+        ' If we are in a table with a column spanning some rows,
+        '   we could get into an endless loop,
+        ' so get out of the table.
+        '
+        Do While Selection.Information(wdWithInTable) = True
+            TableExit = True
+            Selection.MoveDown Unit:=wdLine
+        Loop
+        
+        If (ActiveDocument.Range.End - Selection.Start) < 2 Then
+            Exit Do
+        End If
+        
+        If TableExit = False Then
+            Position = Selection.Start
+            Selection.MoveDown Unit:=wdParagraph, Count:=1
+            If Selection.Start = Position Then Exit Do
+        End If
+        
+        TableExit = False
+   Loop
+   
+' Now do the same for Chapter followed by Section, if NOT DropCap chapter #s.
+   If VariableGet("DropCapChapterNumbers") <> "yes" Then
+      Selection.HomeKey Unit:=wdStory
+      
+      Do
+         StyleName = Selection.Paragraphs(1).Style
+         If StyleName Like "c*" Then
+            Selection.MoveDown Unit:=wdParagraph, Count:=1
+           
+            StyleName = Selection.Paragraphs(1).Style
+            If StyleName Like "s*" _
+            Or StyleName Like "ms*" Then
+               Selection.ParagraphFormat.SpaceBefore = 0
+               Selection.MoveUp Unit:=wdParagraph, Count:=1
+               Selection.ParagraphFormat.SpaceAfter = 0
+               Selection.MoveDown Unit:=wdParagraph, Count:=2
+            End If
+         End If
+               
+            If (ActiveDocument.Range.End - Selection.Start) < 2 Then
+                Exit Do
+            End If
+            Selection.MoveDown Unit:=wdParagraph, Count:=1
+      Loop
+   End If
+   
+   VariableSet "CombinedRefs", "done"
+   Application.ScreenUpdating = True
+End Sub
+
+Private Function RoundInt(n)
+'rounds a number to the nearest integer
+RoundInt = WordBasic.Int(n + (Sgn(n) * 0.5))
+End Function
+Private Sub CheckCurrentLineSpacing()
+Dim lrule
+Dim lspace
+lrule = Selection.Paragraphs(1).LineSpacingRule
+lspace = Selection.Paragraphs(1).LineSpacing
+
+MsgBox "LineSpacingRule is: " & lrule & vbCrLf & _
+        "LineSpacing is: " & lspace
+End Sub
+Public Sub SpaceBetweenWords()
+    ' Make the font bigger and add spaces between words
+    ' so translators can write glosses beneath them.
+    '
+    With ActiveDocument.Styles("_BodyText_Base").Font
+        .Spacing = 1.2
+        .Size = 14
+    End With
+    SetStandardFindOptions
+    Selection.HomeKey Unit:=wdStory
+    
+    With Selection.Find
+        .ClearFormatting
+        .Text = " "
+        .Replacement.Text = "    "
+        .Forward = True
+        .Wrap = wdFindStop
+        .Format = False
+        .Execute Replace:=wdReplaceAll
+    End With
+    
+    ' That replaced any fixed spaces after verse numbers with spaces,
+    '   so put them back again.
+    '
+    Selection.HomeKey Unit:=wdStory
+    Selection.Find.ClearFormatting
+    Selection.Find.Style = ActiveDocument.Styles(StdVerseStyle)
+    Selection.Find.Replacement.ClearFormatting
+    With Selection.Find
+'        .Text = " {1,}"
+        .Text = " " & _
+            "{1" & Application.International(wdListSeparator) & "}"
+        .Replacement.Text = "^s"
+        .Forward = True
+        .Format = True
+        .MatchWildcards = True
+    End With
+    Selection.Find.Execute Replace:=wdReplaceAll
+    Selection.HomeKey Unit:=wdStory
+    SetStandardFindOptions
+End Sub

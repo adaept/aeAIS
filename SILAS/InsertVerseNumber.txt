@@ -1,0 +1,528 @@
+Attribute VB_Name = "InsertVerseNumber"
+
+' InsertVerseNumber Macro
+' Prompts for a verse number, then inserts it with proper style applied.
+' Also, subroutines here can reformat existing verse numbers.
+
+' The user can finish typing a sentence, run InsertVerseNumber, and continue typing. Alternatively, the user can place the insertion point anywhere between two words and then run this macro.
+' The verse number entered can be a simple number or a range like 6-7. A comma is not supported.
+' If text is selected before InsertVerseNumber is run, any selected digits are used for the verse number prompt.
+' When the user enters a verse number and clicks OK, the macro first deletes any text previously selected, then deletes adjacent spaces, inserts the new verse number, and puts proper spaces around the new verse number.
+'A non-breaking space will be used after the verse number.
+'An entered hyphen will be inserted as a non-breaking hyphen.
+'Normally the Verse Num character style is applied to the verse number (and to the non-breaking space after it).
+'If within a back translation paragraph, a special BT Verse Num character style is applied instead.
+
+'To scan the entire document for digit strings and reformats these as verse numbers, run the Reformat Verse Numbers macro (which actually calls subroutines back in this module to do the work).
+
+' ver 1.3 Mar96 B Wussow JAARS ICTS, PNG
+' ver 1.4 Jun97 Josh Kelly
+'       replaced "Stop - 1" commands with calls to Lib1.EndMacro
+' ver 1.5 Aug97 BDW&DBevan added code to guess the verse number
+' ver 1.6 Dec97 BDW cleaned up scrolling for guess of verse number
+' ver 1.7 Oct98 BDW fixed handling of large numbers and commas in them
+' ver 1.8 Aug05 KEB changed stylenames to USFM.STY standard
+
+
+Dim VerseNumberCStyle$  'character styles for verse numbers
+Dim NBSPC               'code for non-breaking space, hyphen
+Dim NBHYP
+Dim CR$                 'CR string
+
+Option Explicit
+Public Sub MAIN()   'InsertVerseNumber  MAIN routine
+VerseNumberCStyle$ = ""
+NBSPC = 0
+NBHYP = 0
+CR$ = ""
+' Prompts for a verse number, then inserts it with proper style applied.
+VerseNumProcessing (0)      'all the work done is done by the sub
+End Sub
+
+
+
+'-------------------
+'Global Variables for this module
+
+
+Private Sub VerseNumProcessing(nMode)
+Dim Num$
+'This is the core module for inserting or reformatting verse numbers
+'nMode parameter:   0=Prompt and then insert at cursor (or sel)
+'                   1=Reformat all nums within document
+'                   2=Reformat all nums within selection
+
+' Init Global Variables   (all subroutines need these)
+VerseNumberCStyle$ = StdVerseStyle    'character style for verse numbers
+If InStr(WordBasic.[AppInfo$](1), "Windows") <> 0 Then
+    NBSPC = 160                 ' code for non-breaking space (ANSI)
+    NBHYP = 30                  ' code for non-breaking hyphen
+Else
+    NBSPC = 202                 ' code for non-breaking space (MAC)
+    NBHYP = 30                  ' code for non-breaking hyphen
+End If
+CR$ = Chr(13)                   'CR for text strings in MsgBox
+
+' Mode 0  - Prompt user for verse number now
+'                       (before initializing Word options)
+Rem If nMode = 0 Then CheckForHiddenText
+If nMode = 0 Then PromptForVerseNum nMode, Num$
+
+' Initialize Word for verse number processing
+'we need to turn off SmartCutPaste, or we will be unable to delete a space after a period
+Dim TOErecord As Object: Set TOErecord = WordBasic.DialogRecord.ToolsOptionsEdit(False)
+WordBasic.CurValues.ToolsOptionsEdit TOErecord      'remember original settings
+' WordBasic.ToolsOptionsEdit SmartCutPaste:=0
+    Gen.DisableSmartCutAndPaste "disable"   ' and remember user's preference
+Dim TOVrecord As Object: Set TOVrecord = WordBasic.DialogRecord.ToolsOptionsView(False)
+WordBasic.CurValues.ToolsOptionsView TOVrecord      'remember original settings
+WordBasic.ToolsOptionsView Bookmarks:=0         'cleaner display w/o bookmarks
+'we leave hidden text hid for now so that ReformatAll mode finds and reformats only the visible numbers
+WordBasic.EditFindClearFormatting
+
+' Normal mode - Insert the given verse number
+If nMode = 0 Then InsertAVerseNum nMode, Num$
+
+' Reformat modes - Reformat existing numbers
+If nMode > 0 Then ReformatNumbers (nMode)
+
+'Clean up
+WordBasic.ToolsOptionsEdit TOErecord
+WordBasic.ToolsOptionsView TOVrecord
+    Gen.DisableSmartCutAndPaste         ' restore user's preference
+
+End Sub
+
+
+'-------------------
+Private Sub InsertAVerseNum(nMode, Num$)
+Dim flag
+Dim n
+Dim nChar
+Dim sty$
+Dim s1$
+Dim i
+Dim ch$
+'Properly inserts the given verse number into the document
+'nMode =0 user entered, =1or2 reformatting all in doc/sel
+'Num$  the verse number string to insert
+'the string in Num$ may contain a hyphen or a NBHYP
+
+' Remove the current selection, if any
+If WordBasic.SelType() = 2 Then
+    WordBasic.WW6_EditClear
+End If
+
+'Clean up the number string
+Num$ = WordBasic.[LTrim$](Num$)
+Num$ = WordBasic.[RTrim$](Num$)
+
+'Before we can edit, Word needs to view hidden text- otherwise adjacent edits can be placed in the hidden text- yuk
+Dim TOVrecord2 As Object: Set TOVrecord2 = WordBasic.DialogRecord.ToolsOptionsView(False)
+WordBasic.CurValues.ToolsOptionsView TOVrecord2     'remember current settings
+WordBasic.ScreenUpdating 0
+If TestForHiddenText < 1 Then
+    WordBasic.ToolsOptionsView Hidden:=1
+Else
+    'do extra trick because hidden text is present here
+    WordBasic.CharRight 1       ' move 1 char within visible text
+    WordBasic.ToolsOptionsView Hidden:=1
+    WordBasic.CharLeft 1        'back to target position, but after hidden stuff
+End If
+
+' Remove any adjacent spaces in the text
+flag = 1
+While flag
+    n = Asc(WordBasic.[Selection$]())   'get code just to the right
+    If n = 32 Or n = NBSPC Then WordBasic.WW6_EditClear Else flag = 0
+Wend
+
+flag = 1
+While flag
+    WordBasic.CharLeft              'get code just to the left
+    n = Asc(WordBasic.[Selection$]())
+    If n = 32 Or n = NBSPC Then WordBasic.WW6_EditClear Else flag = 0
+Wend
+nChar = n       'remember code of this leading character
+'in text, we leave the insertion point one char to the left of target position
+
+' Insert the leading space, unless we are at the start of para/doc
+If nChar = 13 Then          'at start of paragraph
+    WordBasic.CharRight 1           ' move back to target position
+ElseIf WordBasic.AtStartOfDocument() Then       'at start of document
+    ' do nothing, stay here
+Else                                'all other places
+    WordBasic.CharRight 1       ' back to target position
+    WordBasic.ResetChar
+    WordBasic.Insert " "            ' insert the single space
+End If
+
+' Set the character style
+sty$ = WordBasic.[StyleName$](): s1$ = LCase(sty$)  'get current para style
+WordBasic.Style VerseNumberCStyle$  'normal verse number style
+
+'Restore view options now
+WordBasic.ToolsOptionsView TOVrecord2
+If nMode = 0 Then WordBasic.ScreenUpdating 1
+
+' Insert the verse number
+For i = 1 To Len(Num$)
+    ch$ = Mid(Num$, i, 1)       ' get the next character from Num$
+    Select Case ch$
+        Case " "
+            ' do nothing        ' skip spaces
+        Case "-"
+            WordBasic.Insert Chr(NBHYP) ' use a non-breaking hyphen
+Rem         Case ","
+Rem             Insert ","          ' wish we had a non-breaking comma
+        Case Else
+            WordBasic.Insert ch$            ' insert typical digits
+    End Select
+Next i
+WordBasic.Insert Chr(NBSPC)             ' add a trailing non-breaking space
+
+' Change back to default font so user can enter text immediately
+WordBasic.ResetChar
+
+End Sub
+
+
+'-------------------
+Private Function TestForHiddenText()
+Dim n1
+Dim n2
+Dim iDiff
+' Tests if there is hidden text between the insertion point and the next visible character to the right
+' ?someday  or if there is hidden text within the current selection
+'return values:
+'-1 insertion point is at end of visible characters
+'0 is normal text, no hidden stuff
+'>0 there are n hidden chars between the cursor and next visible char,
+'     or in the selection
+
+TestForHiddenText = -999    'default for if text is selected
+
+If WordBasic.SelType() = 1 Then     'if a solid insertion point
+    n1 = WordBasic.GetSelEndPos()
+    WordBasic.CharRight 1
+    n2 = WordBasic.GetSelEndPos()
+    iDiff = n2 - n1     'expect difference of 1 for normal text
+    If iDiff Then WordBasic.SetSelRange n1, n1  'put insertion point back
+    TestForHiddenText = iDiff - 1
+End If
+End Function
+
+
+Private Sub CheckForHiddenText()
+Dim iAns
+'if there is hidden text between the insertion point and the next visible character to the right, warns the user
+
+If WordBasic.SelType() = 1 Then     'if insertion point, not a selection
+    If TestForHiddenText > 1 Then   'if text hidden here
+        WordBasic.ToolsOptionsView ShowAll:=1
+        WordBasic.CharRight: WordBasic.CharLeft     ' trick to make the cursor visible
+        iAns = WordBasic.MsgBox("You should always show adjacent hidden text before you insert a verse number." + Chr(13) + "Insert the verse number here?", 52)
+        If iAns = 0 Then WordBasic.Call "Lib1.EndMacro"
+    End If
+End If  'end if insertion point
+
+End Sub
+
+
+'-------------------
+Private Sub PromptForVerseNum(nMode, Num$)
+Dim s1$
+Dim i
+Dim ch$
+Dim n
+Dim fBT
+Dim nPos
+Dim s$
+Dim v
+ReDim Chap__$(0)
+Dim button
+'Prompts user for number
+'Sets Num$ param
+'Currently, nMode param is not used or changed
+
+' If there is a current selection, get digits within it
+If WordBasic.SelType() = 2 Then
+    s1$ = WordBasic.[Selection$]()
+    For i = 1 To Len(s1$)
+        ch$ = Mid(s1$, i, 1): n = Asc(ch$)
+        If (n > 47 And n < 58) Or n = 45 Then
+            Num$ = Num$ + ch$
+        ElseIf n = NBHYP Or n = 44 Then
+            Num$ = Num$ + "-"
+        End If
+    Next
+'   Num$ contains the digits found
+End If
+
+' If no selection or digits, try to guess this verse number
+If WordBasic.SelType() <> 2 Or Num$ = "" Then
+    'Find the preceeding verse number
+    WordBasic.ScreenUpdating 0
+    WordBasic.EditBookmark Name:="_IV_1", Add:=1        'remember orig pos
+    fBT = InStr(WordBasic.[StyleName$](), "BT") 'check if we're in a BT para
+    nPos = WordBasic.Call("Lib1.GetVScroll")
+
+    WordBasic.EditFindClearFormatting
+    WordBasic.EditFindStyle Style:=VerseNumberCStyle$
+    WordBasic.EditFind Find:="", Direction:=1, Format:=1, Wrap:=0
+    If WordBasic.EditFindFound() Then
+        'Found a preceeding verse number
+        WordBasic.EditBookmark Name:="_IV_2", Add:=1        'remember prec pos
+        s$ = WordBasic.[Selection$]()
+        n = InStr(s$, Chr(NBHYP))       'test for bridged vn
+        If n = 0 Then n = InStr(s$, "-")
+        If n = 0 Then n = InStr(s$, ",")
+        If n Then s$ = WordBasic.[Right$](s$, Len(s$) - n)
+        v = WordBasic.Val(s$) + 1   'calc next number
+
+        'Check for a chapter number between
+        ReDim Chap__$(2)
+        Chap__$(1) = StdChapterStyle
+        Chap__$(2) = "ca...ca* - Chapter Number - Alternate"
+        For i = 1 To 2
+            WordBasic.EditBookmark Name:="_IV_2", GoTo:=1
+            WordBasic.ExtendSelection
+            WordBasic.WW7_EditGoTo Destination:="_IV_1"     'set selection betw vn's
+            WordBasic.Cancel
+            WordBasic.EditFindStyle Style:=Chap__$(i)
+            WordBasic.EditFind Find:="", Direction:=0, Format:=1, Wrap:=0
+            If WordBasic.EditFindFound() Then  'if chap num betw orig & prec vn
+                v = 1   'new chapter; verse is 1
+                i = 9   'get out of for-next
+            End If
+        Next i
+        WordBasic.EditBookmark Name:="_IV_2", Delete:=1
+    Else
+        v = 1   'no preceeding verse numbers
+    End If
+    Num$ = WordBasic.[LTrim$](Str(v))   'Num$ contains the digits guessed
+
+    ' Restore the scroll and selection
+    WordBasic.Call "Lib1.SetVScroll", nPos
+    WordBasic.ScreenUpdating 1
+    WordBasic.WW7_EditGoTo Destination:="_IV_1"         'go back to original position
+    WordBasic.EditBookmark Name:="_IV_1", Delete:=1
+    WordBasic.EditFindClearFormatting
+End If 'try to guess verse number
+
+' Prompt with dialog box for the verse number or mode
+WordBasic.BeginDialog 305, 88, "Insert Verse Number"
+    WordBasic.Text 10, 11, 59, 13, "Number", "Text1"
+    WordBasic.TextBox 79, 6, 89, 18, "Num$"
+    WordBasic.Text 19, 32, 105, 13, "examples:  24", "Text2"
+    WordBasic.Text 105, 45, 30, 13, "6-7", "Text4"
+    WordBasic.OKbutton 206, 8, 88, 21
+    WordBasic.CancelButton 206, 32, 88, 21
+Rem CheckBox 12, 66, 251, 16, "&Reformat all existing numbers", .Reformat
+WordBasic.EndDialog
+Dim Vdlg As Object: Set Vdlg = WordBasic.CurValues.UserDialog
+Vdlg.Num$ = Num$
+
+button = WordBasic.Dialog.UserDialog(Vdlg)
+If button = 0 Then WordBasic.Call "Lib1.EndMacro"       'cancelled
+
+'Get the info entered
+Rem nMode = Vdlg.Reformat
+Num$ = Vdlg.Num$
+Num$ = WordBasic.[LTrim$](Num$)
+Num$ = WordBasic.[RTrim$](Num$)
+If nMode = 0 And Len(Num$) = 0 Then WordBasic.Call "Lib1.EndMacro"  ' nothing to insert
+
+End Sub
+
+
+'-------------------
+Private Sub ReformatNumbers(nMode)
+Dim fDoSeqCk
+Dim sTitle$
+Dim vnumLast
+Dim nCount
+Dim done
+Dim s1$
+Dim fBT
+Dim vndone
+Dim n
+Dim Num$
+Dim pos
+Dim vtype
+Dim num1
+Dim num2
+Dim flag
+Dim iRtn
+'Reformats existing numbers in the document as verse numbers
+'nMode parameter:   1=Reformat all nums within document
+'                   2=Reformat all nums within selection
+'This routine scans the entire document for digit strings, and reformats these as verse numbers.
+'If the digit string is in a chapter heading or reference line, it is skipped and not reformated.
+' So be sure that chapter numbers and reference lines have proper paragraph styles applied before you "Reformat" verse numbers.
+'If the numbers found are not in sequence, the user is prompted. The number may not be a verse number,
+' or a verse number may be missing. (Sequence of back translation verse numbers is not checked.)
+
+' Initialize
+fDoSeqCk = 1        'set to 0 to disable all sequence checking
+sTitle$ = "Reformat Verse Numbers"  'title for dialogs
+WordBasic.ScreenUpdating 0
+WordBasic.EditFindClearFormatting
+vnumLast = -1   'reset the sequence check
+nCount = 0
+
+' Mark the area of text we will process
+If nMode = 2 Then
+    'there is a selection, so process within it
+    WordBasic.SetStartOfBookmark "\Sel", "Begin"    'beg of the text to scan
+    WordBasic.SetEndOfBookmark "\Sel", "End"        'end of the text to scan
+Else
+    'no selection, so process the whole document
+    WordBasic.SetStartOfBookmark "\Doc", "Begin"
+    WordBasic.SetEndOfBookmark "\Doc", "End"
+End If
+
+' Find the first digit
+If nMode = 1 Then WordBasic.StartOfDocument
+'nMode 2  area is already selected
+WordBasic.EditFind Find:="^#", Direction:=0, MatchCase:=0, WholeWord:=0, PatternMatch:=0, SoundsLike:=0, Format:=0, Wrap:=0
+done = 0
+
+' For every initial digit found...
+While WordBasic.EditFindFound() And done = 0
+
+    'skip this number if in a chapter number or a reference line
+    s1$ = LCase(WordBasic.[StyleName$]())
+    If InStr(s1$, "chap") <> 0 Or InStr(s1$, "ref") <> 0 _
+     Or InStr(s1$, "identif") <> 0 Or InStr(s1$, "intro") <> 0 _
+     Or InStr(s1$, "title") <> 0 Or InStr(s1$, "note") <> 0 Then
+        WordBasic.ParaDown      'skip to next para
+Rem EndOfLine   'orig idea fails in Page view on drop cap with hidden BT
+        If InStr(s1$, "chap") Then vnumLast = 0 'restart sequence check
+        GoTo xSkipVN
+    End If
+
+    'check if we're in back translation
+    '(in WW6 at least, it's better to check style now after the Find -
+    ' when cursor is moved later, a preceeding hidden para causes prob)
+    fBT = InStr(WordBasic.[StyleName$](), "BT")
+
+    'Select the entire verse number
+    WordBasic.SetStartOfBookmark "\Sel", "VNbegin"  'beg of the first digit
+    WordBasic.SetEndOfBookmark "\Sel", "VNend"  'end of the first digit
+    vndone = 0
+    While vndone = 0
+        WordBasic.CharRight     'move just to the right
+        WordBasic.CharRight 1, 1    'select the next character
+        s1$ = WordBasic.[Selection$]():    n = Asc(s1$)
+        If (n > 47 And n < 58) Or n = 44 Or n = 45 Or n = NBHYP Then
+            WordBasic.SetEndOfBookmark "\Sel", "VNend"  'end of this digit
+        Else
+            vndone = 1
+        End If
+    Wend
+    WordBasic.WW7_EditGoTo Destination:="VNbegin"   'select the entire verse num
+    WordBasic.ExtendSelection
+    WordBasic.WW7_EditGoTo Destination:="VNend"
+    WordBasic.Cancel            'end extendselection mode
+    WordBasic.ScreenRefresh 'show progress to the user
+
+    ' Get the verse number string
+    Num$ = WordBasic.[Selection$]()
+
+    'jump ahead now if sequence is not to be checked
+    If fDoSeqCk = 0 Then GoTo InsertVN  'if disabled
+    If fBT Then GoTo InsertVN   'if in back trans
+
+    'normalize NBHYP in Num$ bridged string, for msgbox
+    pos = InStr(Num$, Chr(NBHYP))   'find non-breaking hyphen
+    If pos Then Num$ = Mid(Num$, 1, pos - 1) + "-" + Mid(Num$, pos + 1, Len(Num$) - pos)
+
+    ' Get the verse number value(s)
+    s1$ = Num$
+    pos = InStr(s1$, Chr(44))   ' find comma in s1$
+    While pos <> 0      'remove comma
+        s1$ = Mid(s1$, 1, pos - 1) + Mid(s1$, pos + 1, Len(s1$) - pos)
+        pos = InStr(s1$, Chr(44))   ' find subsequent comma
+    Wend
+    pos = InStr(s1$, Chr(45))   ' or find hyphen in s1$
+    If pos = 0 Then
+        vtype = 1   'single verse num
+        num1 = WordBasic.Val(s1$)
+    Else
+        vtype = 2   'analyze as a bridged verse number
+        num1 = WordBasic.Val(Mid(s1$, 1, pos - 1))
+        num2 = WordBasic.Val(Mid(s1$, pos + 1, Len(s1$) - pos))
+    End If
+
+    ' Check verse number sequencing
+    If num1 > 176 Then      'skip anything too large if not already vn
+        If WordBasic.[StyleName$]() <> VerseNumberCStyle$ Then
+            WordBasic.CharRight
+            GoTo xSkipVN
+        End If
+    End If
+    If vtype = 1 Then       'check single verse number
+        If (num1 = vnumLast + 1 Or vnumLast = -1) And _
+                num1 > 0 Then
+            flag = 0
+            vnumLast = num1
+        Else
+            flag = 1
+        End If
+    Else                'check bridged verse numbers
+        If (num1 = vnumLast + 1 Or vnumLast = -1) And _
+                num1 > 0 And num2 > num1 Then
+            flag = 0
+            vnumLast = num2
+        Else
+            flag = 1
+        End If
+    End If
+
+    ' Prompt user if out of sequence
+    If flag Then
+        iRtn = WordBasic.MsgBox("The existing number '" + Num$ + "' is not in verse sequence." + CR$ + "Format it as a verse number?", sTitle$, 307)
+        If iRtn = -1 Then   'YES
+            If vtype = 1 Then vnumLast = num1 Else vnumLast = num2
+            'we go on and format it
+        ElseIf iRtn = 0 Then    'NO
+            WordBasic.CharRight 1, 1: WordBasic.ResetChar: WordBasic.CharRight: GoTo xSkipVN
+        Else  'iRtn = 1         'CANCEL
+            GoTo Bailout
+        End If
+    End If
+    
+    ' Replace the selection with a formatted verse number
+InsertVN:
+    InsertAVerseNum nMode, Num$
+    nCount = nCount + 1
+
+    ' Prepare for the next one
+xSkipVN:
+    WordBasic.EditFind      'repeat find for next digit
+    n = WordBasic.CmpBookmarks("\Sel", "End")
+    If n = 1 Or n = 11 Then done = 1
+Wend
+
+
+'Completion Message
+If nMode = 1 Then WordBasic.StartOfDocument
+If nMode = 2 Then WordBasic.WW7_EditGoTo Destination:="Begin"
+WordBasic.ScreenRefresh
+If nMode = 1 Then
+    WordBasic.MsgBox Str(nCount) + " verse numbers were formatted.", _
+    sTitle$, 64
+End If
+
+'Clean up
+Bailout:
+WordBasic.EditBookmark Name:="Begin", Delete:=1
+WordBasic.EditBookmark Name:="End", Delete:=1
+If nCount > 0 Then
+    WordBasic.EditBookmark Name:="VNbegin", Delete:=1
+    WordBasic.EditBookmark Name:="VNend", Delete:=1
+End If
+
+End Sub
+
